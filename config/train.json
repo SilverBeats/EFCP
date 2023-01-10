@@ -1,0 +1,37 @@
+{
+	"seed": 3,
+	"ckpt": null,
+	"model_name": "efcp",
+	"corpus_dir": "output",
+	"output_dir": "output",
+	"gpt2_path": "./pre_trained/distilgpt2",
+	"epochs": 5,
+	"optim_steps": 48000,
+	"eval_step_interval": 1300,
+	"train_batch_size": 32,
+	"valid_batch_size": 24,
+	"lr": 1e-4,
+	"max_grad_norm": 1.0,
+	"warmup_steps": 1300,
+	"model_config": {
+		"source_types": 2,
+		"attention_fusion_type": "sw",
+		"fuse_c_p_type": "co",
+		"ablation_config": {
+			"do_acs": true,
+			"use_persona": true,
+			"pred_with_persona": true
+		},
+		"encoder_config": {
+			"num_layers": 1,
+			"num_heads": 2,
+			"total_value_depth": 40,
+			"total_key_depth": 40,
+			"filter_size": 50,
+			"max_length": 1000
+		},
+		"pred_comae_coef": 1.0,
+		"encode_lm_coef": 1.0,
+		"k": 768
+	}
+}

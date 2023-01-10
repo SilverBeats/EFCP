@@ -1,0 +1,50 @@
+{
+	"corpus_dir": "output",
+	"gpt2_path": "./pre_trained/distilgpt2",
+	"device": "cuda",
+	"model_name": "efcp",
+	"ckpt": null,
+	"infer_batch_size": 32,
+	"add_nlgeval": false,
+	"add_bert_score": true,
+	"bert_score_config": {
+		"model_type": "./pre_trained/roberta-large",
+		"num_layers": 17,
+		"batch_size": 32,
+		"lang": "en"
+	},
+	"gen_config": {
+		"max_length": 35,
+		"min_length": 5,
+		"do_sample": true,
+		"num_beams": 1,
+		"temperature": 0.7,
+		"top_k": 0,
+		"top_p": 0.9,
+		"repetition_penalty": 1.5,
+		"length_penalty": 1.0,
+		"no_repeat_ngram_size": 0,
+		"num_return_sequences": 1
+	},
+	"model_config": {
+		"source_types": 2,
+		"attention_fusion_type": "sw",
+		"fuse_c_p_type": "linear",
+		"ablation_config": {
+			"do_acs": true,
+			"use_persona": true,
+			"pred_with_persona": true
+		},
+		"pred_comae_coef": 1.0,
+		"encode_lm_coef": 1.0,
+		"k": 768,
+		"encoder_config": {
+			"num_layers": 1,
+			"num_heads": 2,
+			"total_value_depth": 40,
+			"total_key_depth": 40,
+			"filter_size": 50,
+			"max_length": 1000
+		}
+	}
+}
