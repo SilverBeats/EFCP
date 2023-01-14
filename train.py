@@ -25,19 +25,19 @@ step = 0
 args = load_json_file('config/train.json')
 set_seed(args['seed'])
 args['device'] = 'cuda' if torch.cuda.is_available() else 'cpu'
+args['device'] = 'cpu'
 tokenizer, gpt2 = build_tokenizer_and_gpt2(name_or_path=args['gpt2_path'],
                                            model_name=args['model_name'],
                                            model_config=args['model_config'])
 # prepare the dataset and dataloader
 train_set = PECDataset(args['corpus_dir'], 'train')
 train_sampler = RandomSampler(train_set)
-train_loader = make_infinite(
-    DataLoader(
-        dataset=train_set,
-        sampler=train_sampler,
-        batch_size=args['train_batch_size'],
-        collate_fn=partial(collate, tokenizer=tokenizer),
-        drop_last=True)
+train_loader = DataLoader(
+    dataset=train_set,
+    sampler=train_sampler,
+    batch_size=args['train_batch_size'],
+    collate_fn=partial(collate, tokenizer=tokenizer),
+    drop_last=True
 )
 valid_set = PECDataset(args['corpus_dir'], 'validation')
 valid_sampler = SequentialSampler(valid_set)
@@ -90,7 +90,7 @@ else:  # training from scratch
     with open(f"{args['base_dir']}/train_config.json", 'w', encoding='utf-8') as f:
         json.dump(args, f, indent=4, ensure_ascii=False, sort_keys=False)
 
-eval_logger = open("{args['log_dir']}/eval.csv", 'a+', buffering=1)
+eval_logger = open(f"{args['log_dir']}/eval.csv", 'a+', buffering=1)
 print('step,eval_loss,eval_ppl', file=eval_logger)
 pbar = tqdm(total=args['optim_steps'], desc=f'training', dynamic_ncols=True)
 pbar.update(step)
@@ -127,6 +127,7 @@ def eval_and_save_model(file_name):
     return eval_loss, eval_ppl
 
 
+train_loader = make_infinite(train_loader)
 while True:
     model.train()
     batch = {k: v.to(args['device']) if isinstance(v, Tensor) else v for k, v in next(train_loader).items()}

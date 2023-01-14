@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import emoji
 import numpy as np

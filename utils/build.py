@@ -16,7 +16,7 @@ def build_tokenizer_and_gpt2(name_or_path: str, only_tokenizer=False, **kwargs):
     model_name = kwargs['model_name']
     model_config = kwargs['model_config']
     model = GPT2EncoderDecoderModel.from_pretrained(name_or_path) \
-        if model_name in ['wp', 'multi'] \
+        if model_name in ['efcp', 'multi'] \
         else MyGPT2LMHeadModel.from_pretrained(name_or_path)
 
     model.resize_token_embeddings(len(tokenizer))
@@ -49,7 +49,7 @@ def modify_gpt2_model(model, tokenizer, model_name, model_config):
     # init the GPT2Model context_attn
     atten_fuse_type = model_config['attention_fusion_type']
 
-    if model_name == 'wp':
+    if model_name == 'efcp':
         use_persona = model_config['ablation_config']['use_persona']
         model_config['source_types'] = 2 if use_persona else 1
 
