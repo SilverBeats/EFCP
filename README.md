@@ -67,7 +67,7 @@ With `config/train.json`, I explain some configuration items and the optional va
 | --------------------- | ------------------------------------------------------------ | -------------------------------- |
 | model_name            |                                                              | `{efcp\|comae\|vanilla\|multi\|cem}` |
 | source_types          | In addition to response, gpt2 also takes context and persona as inputs, so the source_types is 2. |                                  |
-| attention_fusion_type | GPT2 accepts how multiple input sources should be fused. You can find more details in [MutliGPT2 Repo](https://github.com/caoyu-noob/Multi-GPT2). | `{sw|linear}`                    |
+| attention_fusion_type | GPT2 accepts how multiple input sources should be fused. You can find more details in [MutliGPT2 Repo](https://github.com/caoyu-noob/Multi-GPT2). | `{sw\|linear}`                    |
 | fuse_c_p_type         | How to merge context and persona to predict empathy factors. | `{linear\|co}`                    |
 | k                     | related to Co-Attention                                      |                                  |
 
