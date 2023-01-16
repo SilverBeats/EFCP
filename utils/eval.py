@@ -1,8 +1,3 @@
-"""
-code from comae repo
-https://github.com/chujiezheng/CoMAE/tree/main/codes
-"""
-
 import logging
 import warnings
 from collections import Counter
