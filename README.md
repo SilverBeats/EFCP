@@ -9,7 +9,7 @@ pip install -r requestments.txt
 ```
 ### 1.2 Prepare the model and dataset
 
-`prepare.py` corresponds to the *Data Processing section in the paper. If you want to run `prepare.py` (although we do not recommend it), you need to prepare the following parts:
+`prepare.py` corresponds to the *Data Processing* section in the paper. If you want to run `prepare.py` (although we do not recommend it), you need to prepare the following parts:
 
 | Models / Datasets        | Sources                                                      |
 | ------------------------ | ------------------------------------------------------------ |
