@@ -1,37 +1,11 @@
-"""TODO: Add a description here."""
-
 import os
 
 import datasets
 
 
-# TODO: Add BibTeX citation
-_CITATION = """\
-@inproceedings{zhong2020towards,
-    title = "Towards Persona-Based Empathetic Conversational Models",
-    author = "Zhong, Peixiang  and
-      Zhang, Chen  and
-      Wang, Hao  and
-      Liu, Yong  and
-      Miao, Chunyan",
-    booktitle = "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP)",
-    year = "2020",
-    publisher = "Association for Computational Linguistics",
-    url = "https://www.aclweb.org/anthology/2020.emnlp-main.531",
-    pages = "6556--6566"}
-"""
 
-# TODO: Add description of the dataset here
-_DESCRIPTION = """\
-A dataset of around 350K persona-based empathetic conversations. Each speaker is associated with a persona, which comprises multiple persona sentences. The response of each conversation is empathetic.
-"""
 
 _URL = "./data/PEC"
-
-# TODO: Name of the dataset usually match the script name with CamelCase instead of snake_case
-# Using a specific configuration class is optional, you can also use the base class if you don't need
-# to add specific attributes.
-# here we give an example for three sub-set of the dataset with difference sizes.
 
 
 class PECConfig(datasets.BuilderConfig):

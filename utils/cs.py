@@ -1,15 +1,3 @@
-"""
-coding=utf-8
-@inproceedings{Hwang2021COMETATOMIC2O,
-  title={COMET-ATOMIC 2020: On Symbolic and Neural Commonsense Knowledge Graphs},
-  author={Jena D. Hwang and Chandra Bhagavatula and Ronan {Le Bras} and Jeff Da and Keisuke Sakaguchi and Antoine Bosselut and Yejin Choi},
-  booktitle={AAAI},
-  year={2021}
-}
-https://github.com/allenai/comet-atomic-2020/tree/master/models/comet_atomic2020_bart
-here, we combine the generation_example.py and utils.py
-"""
-
 from typing import Iterable
 
 import torch

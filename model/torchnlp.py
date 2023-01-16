@@ -1,8 +1,3 @@
-"""
-Code from https://github.com/kolloldas/torchnlp, we changed nothing.
-Just for the convenience of replicating, you can not install TorchNLP
-"""
-
 import math
 
 import numpy as np
