@@ -1,164 +1,174 @@
 import json
 import os
 from functools import partial
+from pprint import pp
 from typing import List
 
+import hydra
 import nltk
 import torch
+from omegaconf import DictConfig, OmegaConf
 from sklearn.metrics import confusion_matrix
-from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-
-from utils.build import build_model, build_special_token_2_id, build_tokenizer_and_gpt2
-from utils.common import get_logger, load_json_file
+from transformers import PreTrainedTokenizer
+from utils.build import build_model, build_tokenizer_and_gpt2
+from utils.common import check_model_config, data_2_device
 from utils.constant import ACC_LIST, DOMAINS
 from utils.eval import MyMetric, eval_model_loss
-from utils.inputter import PECDataset, collate
+from utils.inputter import PECDataset, collate_fn
+from typing import Dict, Any
 
-logger = get_logger(__name__)
-
-
-def prepare_dataloader(args, tokenizer, split, domain=None, do_gen=False):
-    dataset = PECDataset(args['corpus_dir'], split, domain)
+def prepare_dataloader(
+        args: Dict[str, Any],
+        tokenizer: PreTrainedTokenizer,
+        split: str,
+        do_gen: bool,
+        use_cs:bool
+):
+    dataset = PECDataset(args['corpus_dir'], split, None)
     batch_size = args['infer_batch_size']
     dataloader = DataLoader(
         dataset=dataset,
         batch_size=batch_size,
-        collate_fn=partial(collate, tokenizer=tokenizer, do_gen=do_gen)
+        collate_fn=partial(collate_fn, tokenizer=tokenizer, do_gen=do_gen, use_cs=use_cs)
     )
     return dataloader
 
 
-if __name__ == '__main__':
-    args = load_json_file('config/infer.json')
-    device = args['device']
+@hydra.main(version_base=None, config_path='config', config_name='infer')
+def main(cfg: DictConfig):
+    cfg: dict = OmegaConf.to_container(cfg, resolve=True, enum_to_str=True)
 
-    base_dir = os.path.dirname(args['ckpt'])[:-5]
+    model_name = cfg['model_name']
+    generate_config = cfg['generate_config']
+    infer_config = cfg['infer']
+    model_config = cfg['model']
+    ablation_mode = infer_config.pop('ablation_mode')
+
+    check_model_config(model_name, ablation_mode, model_config)
+    print(f'Ablation_mode: {ablation_mode}')
+    pp(model_config)
+
+    base_dir = os.path.dirname(infer_config['ckpt'])[:-5]
     infer_dir = os.path.join(base_dir, 'infer')
     os.makedirs(infer_dir, exist_ok=True)
 
-    logger.info('Preparing the tokenizer and gpt2 model.')
-    tokenizer, gpt2 = build_tokenizer_and_gpt2(name_or_path=args['gpt2_path'],
-                                               model_name=args['model_name'],
-                                               model_config=args['model_config'])
-    token_id_dict = build_special_token_2_id(tokenizer)
-    logger.info('Prepare the model and load check point.')
-    model = build_model(gpt2, tokenizer, args)
-    logger.info(f"Load the ckpt: {args['ckpt']}")
-    weights = torch.load(args['ckpt'], map_location='cpu')['model']
-    model.load_state_dict(weights, strict=False)
-    model.to(args['device'])
+    device = infer_config['device']
+    print(f'create {model_name} model and load ckpt ...')
+    tokenizer, plm = build_tokenizer_and_gpt2(infer_config['gpt2_path'], model_name, model_config)
+
+    model = build_model(model_name, plm, tokenizer, model_config).to(device)
+    model.load_state_dict(torch.load(infer_config['ckpt'], map_location=device), strict=False)
 
     # save the config
     with open(f"{base_dir}/infer_config.json", 'w', encoding='utf-8') as f:
-        json.dump(args, f, indent=4, ensure_ascii=False, sort_keys=False)
+        json.dump(cfg, f, indent=4, ensure_ascii=False, sort_keys=False)
 
-    model_name = args['model_name']
-    for domain in DOMAINS:
-        output_dir = os.path.join(infer_dir, domain)
-        os.makedirs(output_dir, exist_ok=True)
+    output_dir = infer_dir
+    os.makedirs(output_dir, exist_ok=True)
 
-        valid_loader = prepare_dataloader(args, tokenizer, 'test', domain, False)
-        infer_loader = prepare_dataloader(args, tokenizer, 'test', domain, True)
+    print(f"load test data ...")
+    valid_loader = prepare_dataloader(infer_config, tokenizer, 'test', False, model_config['use_cs'])
+    infer_loader = prepare_dataloader(infer_config, tokenizer, 'test', True, model_config['use_cs'])
 
-        metric_res = {}
-        if model_name not in ['vanilla', 'multi']:
-            if model_name == 'cem':
-                ACC_LIST = ['em_top1', 'em_top3']
-            # [right, total, acc]
-            metric_res.update({item: [0, 0, 0.0] for item in ACC_LIST})
-            # to save confusion_matrix
-            confusion_matrix_dict = {item[:-5]: {'pred': [], 'right': []} for item in ACC_LIST}
+    metric_res = {}
 
-        # to save the [post, reference, generation]
-        res = []
+    if model_name == 'comae' or (model_name == 'efcp' and model_config['use_ef']):
+        # [right, total, acc]
+        metric_res.update({item: [0, 0, 0.0] for item in ACC_LIST})
+        # to save confusion_matrix
+        confusion_matrix_dict = {item[:-5]: {'pred': [], 'right': []} for item in ACC_LIST}
 
-        # do eval on test set
-        infer_loss, infer_ppl, *_ = eval_model_loss(model, valid_loader, device)
-        metric_res['perplexity'] = float(infer_ppl)
-        metric = MyMetric()
+    # to save the [post, reference, generation]
+    res = []
 
-        for batch, posts, references in tqdm(infer_loader, total=len(infer_loader), desc='inferring'):
-            batch = {k: v.to(device) if isinstance(v, Tensor) else v for k, v in batch.items()}
-            bs = batch['ctx_input_ids'].shape[0]
-            result_info, generations = model.generate(batch, **args['gen_config'])
-            # calculate the accuracy of CM(er,ex,in), DA and EM prediction
-            if model_name not in ['vanilla', 'multi']:
-                for item in ACC_LIST:
-                    metric_res[item][1] += bs
-                    right_list: List[int] = result_info[f'pred_{item[:-5]}'].view(-1).tolist()
-                    pred_list: List[List[int]] = result_info[f'pred_{item}'].tolist()
-                    right_cnt = sum(1 if r in p else 0 for r, p in zip(right_list, pred_list))
-                    metric_res[item][0] += right_cnt
-                    if item.endswith('top1'):
-                        confusion_matrix_dict[item[:-5]]['pred'].extend(sum(pred_list, []))
-                        confusion_matrix_dict[item[:-5]]['right'].extend(right_list)
+    # do eval on test set
+    eval_result = eval_model_loss(model, valid_loader, device)
+    metric_res['perplexity'] = float(eval_result['ppl'])
+    metric = MyMetric()
 
-            generations: List[str] = tokenizer.batch_decode(generations, skip_special_tokens=True)
+    for batch, posts, references in tqdm(infer_loader, desc='inferring'):
+        batch = data_2_device(batch, device)
+        bs = batch['ctx_input_ids'].shape[0]
+        result_info, generations = model.generate(batch, **generate_config)
 
-            for p, r, g, persona in zip(posts, references, generations, batch['persona_input_ids']):
-                metric.forword([r], g)
-                d = {
-                    'post': p,
-                    'response': r,
-                    'generation': g,
-                }
-                if model_name not in ['vanilla', 'cem']:
-                    decode_persona = tokenizer.decode(persona, skip_special_tokens=list(token_id_dict.values()))
-                    d['persona'] = decode_persona
-                res.append(d)
+        if model_name == 'comae' or (model_name == 'efcp' and model_config['use_ef']):
+            for item in ACC_LIST:
+                metric_res[item][1] += bs
+                right_list: List[int] = result_info[f'pred_{item[:-5]}'].view(-1).tolist()
+                pred_list: List[List[int]] = result_info[f'pred_{item}'].tolist()
+                right_cnt = sum(1 if r in p else 0 for r, p in zip(right_list, pred_list))
+                metric_res[item][0] += right_cnt
+                if item.endswith('top1'):
+                    confusion_matrix_dict[item[:-5]]['pred'].extend(sum(pred_list, []))
+                    confusion_matrix_dict[item[:-5]]['right'].extend(right_list)
 
-        with open(f'{output_dir}/gen.json', mode='w', encoding='utf-8') as f:
-            json.dump(res, f, ensure_ascii=False, indent=4, sort_keys=False)
+        generations: List[str] = tokenizer.batch_decode(generations, skip_special_tokens=True)
 
-        logger.info(f'Save the response generated by the model. You can find it at {output_dir}/gen.json')
+        for p, r, g, persona in zip(posts, references, generations, batch['persona_input_ids']):
+            metric.forword([r], g)
+            res.append({
+                'post': p,
+                'response': r,
+                'generation': g,
+                'persona': tokenizer.decode(persona, skip_special_tokens=True)
+            })
 
-        if model_name not in ['vanilla', 'multi']:
-            for k, v in confusion_matrix_dict.items():
-                with open(f'{output_dir}/{k}_pred_right.json', mode='w', encoding='utf-8') as f:
-                    json.dump(v, f, ensure_ascii=False, sort_keys=False)
-                logger.info(f'{output_dir}/{k}_pred_right.json saved')
-                result = confusion_matrix(y_true=v['right'], y_pred=v['pred']).tolist()
-                with open(f'{output_dir}/{k}_confusion_matrix.json', mode='w', encoding='utf-8') as f:
-                    json.dump(result, f, ensure_ascii=False, sort_keys=False)
-                logger.info(f'{output_dir}/{k}_confusion_matrix.json saved')
+    with open(f'{output_dir}/gen.json', mode='w', encoding='utf-8') as f:
+        json.dump(res, f, ensure_ascii=False, indent=4, sort_keys=False)
 
-            for acc_item in ACC_LIST:
-                right_cnt, total_cnt, _ = tuple(metric_res[acc_item])
-                metric_res[acc_item][-1] = right_cnt / total_cnt
+    print(f'Save the response generated by the model. You can find it at {output_dir}/gen.json')
+    if model_name == 'comae' or (model_name == 'efcp' and model_config['use_ef']):
+        for k, v in confusion_matrix_dict.items():
+            with open(f'{output_dir}/{k}_pred_right.json', mode='w', encoding='utf-8') as f:
+                json.dump(v, f, ensure_ascii=False, sort_keys=False)
+            print(f'{output_dir}/{k}_pred_right.json saved')
+            result = confusion_matrix(y_true=v['right'], y_pred=v['pred']).tolist()
+            with open(f'{output_dir}/{k}_confusion_matrix.json', mode='w', encoding='utf-8') as f:
+                json.dump(result, f, ensure_ascii=False, sort_keys=False)
+            print(f'{output_dir}/{k}_confusion_matrix.json saved')
 
-        logger.info('Start of automatic evaluation')
-        metric_res.update(metric.close()[0])
-        if args['add_nlgeval'] or args['add_bert_score']:
-            refs = []
-            hyps = []
-            for item in res:
-                ref = ' '.join(nltk.word_tokenize(item['response'].lower()))
-                hyp = ' '.join(nltk.word_tokenize(item['generation'].lower()))
-                if ref == '' or hyp == '':
-                    continue
-                refs.append(ref)
-                hyps.append(hyp)
-            if args['add_nlgeval']:
-                logger.info('Using nlgeval')
-                from nlgeval import NLGEval
+        for acc_item in ACC_LIST:
+            right_cnt, total_cnt, _ = tuple(metric_res[acc_item])
+            metric_res[acc_item][-1] = right_cnt / total_cnt
 
-                nlgeval = NLGEval(no_skipthoughts=True)
-                metrics_dict = nlgeval.compute_metrics(ref_list=[refs], hyp_list=hyps)
-                metric_res.update(metrics_dict)
-                print(f'nlgeval finished')
-            if args['add_bert_score']:
-                from bert_score import score
+    print('Start of automatic evaluation')
+    metric_res.update(metric.close())
 
-                P, R, F = score(cands=hyps, refs=refs, device=device, **args['bert_score_config'])
-                metric_res.update({
-                    'bert_score_P': round(P.mean().item(), 6),
-                    'bert_score_R': round(R.mean().item(), 6),
-                    'bert_score_F': round(F.mean().item(), 6),
-                })
+    if infer_config['add_nlgeval'] or infer_config['add_bert_score']:
+        refs = []
+        hyps = []
+        for item in res:
+            ref = ' '.join(nltk.word_tokenize(item['response'].lower()))
+            hyp = ' '.join(nltk.word_tokenize(item['generation'].lower()))
+            if ref == '' or hyp == '':
+                continue
+            refs.append(ref)
+            hyps.append(hyp)
+        if infer_config['add_nlgeval']:
+            print('Using nlgeval')
+            from nlgeval import NLGEval
 
-        with open(f'{output_dir}/metric.json', mode='w', encoding='utf-8') as f:
-            json.dump(metric_res, f, ensure_ascii=False, indent=4, sort_keys=True)
-        logger.info(f'Automatic evaluation result saved. You can find it at {output_dir}/metric.json')
-        torch.cuda.empty_cache()
+            nlgeval = NLGEval(no_skipthoughts=True)
+            metrics_dict = nlgeval.compute_metrics(ref_list=[refs], hyp_list=hyps)
+            metric_res.update(metrics_dict)
+            print(f'nlgeval done')
+        if infer_config['add_bert_score']:
+            from bert_score import score
+
+            P, R, F = score(cands=hyps, refs=refs, device=device, **infer_config['bert_score_config'])
+            metric_res.update({
+                'bert_score_P': round(P.mean().item(), 6),
+                'bert_score_R': round(R.mean().item(), 6),
+                'bert_score_F': round(F.mean().item(), 6),
+            })
+
+    with open(f'{output_dir}/metric.json', mode='w', encoding='utf-8') as f:
+        json.dump(metric_res, f, ensure_ascii=False, indent=4, sort_keys=True)
+    print(f'Automatic evaluation result saved. You can find it at {output_dir}/metric.json')
+    torch.cuda.empty_cache()
+
+
+if __name__ == '__main__':
+    main()

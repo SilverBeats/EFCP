@@ -10,7 +10,7 @@ def trim_batch(input_ids, pad_token_id, attention_mask=None):
     if attention_mask is None:
         return input_ids[:, keep_column_mask]
     else:
-        return (input_ids[:, keep_column_mask], attention_mask[:, keep_column_mask])
+        return input_ids[:, keep_column_mask], attention_mask[:, keep_column_mask]
 
 
 def use_task_specific_params(model, task):
@@ -50,8 +50,12 @@ class Comet:
 
             decs = []
             for batch in list(chunks(examples, self.batch_size)):
-                batch = self.tokenizer(batch, return_tensors="pt", truncation=True, padding="max_length").to(
-                    self.device)
+                batch = self.tokenizer(
+                    text=batch,
+                    return_tensors="pt",
+                    truncation=True,
+                    padding=True
+                ).to(self.device)
                 input_ids, attention_mask = trim_batch(**batch, pad_token_id=self.tokenizer.pad_token_id)
 
                 summaries = self.model.generate(
@@ -124,21 +128,17 @@ ALL_RELATIONS = [
 ]
 
 
-def get_comet(comet_ckpt_path: str):
+def build_comet(comet_ckpt_path: str):
     print(f'load the model from {comet_ckpt_path} ...')
     comet = Comet(comet_ckpt_path)
     return comet
 
 
-def do_expand(comet: Comet, sentences: Iterable, rels: Iterable, **kwargs):
+def do_expand(comet: Comet, sentence, rels: Iterable, **kwargs):
     assert set(rels).issubset(ALL_RELATIONS)
     comet.model.zero_grad()
-    arr = []
-    for sent in sentences:
-        result_dict = {'original': sent}
-        # head = f'{p} pleases ___ to make'
-        queries = [f'{sent} {rel} [GEN]' for rel in rels]
-        for rel, r in zip(rels, comet.generate(queries, **kwargs)):
-            result_dict[rel] = r
-        arr.append(result_dict)
-    return arr
+    result_dict = {'original': sentence}
+    queries = [f'{sentence} {rel} [GEN]' for rel in rels]
+    for rel, r in zip(rels, comet.generate(queries, **kwargs)):
+        result_dict[rel] = r
+    return result_dict

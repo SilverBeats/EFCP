@@ -281,7 +281,7 @@ def _generate_no_beam_search(
 
         position_ids = position_ids[:, -1:] + 1
 
-        if 'additive_embeds' in model_kwargs:
+        if model_kwargs.get('additive_embeds', None) is not None:
             model_kwargs['additive_embeds'] = model_kwargs.pop('additive_embeds')[:, -1:]
 
         if inputs_embeds is not None and token_type_ids is not None:

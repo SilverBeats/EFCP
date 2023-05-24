@@ -1,0 +1,36 @@
+model_name: &model_name efcp
+
+defaults:
+  - model: *model_name
+  - _self_
+  - hydra
+
+model:
+  share_embedding: false
+
+infer:
+  corpus_dir: output
+  gpt2_path: ./pretrained_models/distilgpt2
+  device: cuda
+  ckpt:
+  ablation_mode:   # pwp/per/cs/pred_loss/ef/null
+  infer_batch_size: 32
+  add_nlgeval: false
+  add_bert_score: true
+  bert_score_config:
+      model_type: ./pretrained_models/roberta-large
+      num_layers: 17
+      batch_size: 32
+      lang: en
+
+generate_config:
+  min_length: 5
+  max_length: 35
+  do_sample: true
+  temperature: 0.7
+  num_beams: 1
+  top_k: 0
+  top_p: 0.9
+  repetition_penalty: 1.5
+  no_repeat_ngram_size: 0
+  num_return_sequences: 1

@@ -1,31 +1,20 @@
-import json
-import logging
 import os
 import re
 from typing import Any, Dict, List
 
 import emoji
 import numpy as np
-import torch
+from torch import Tensor
 
-from utils.constant import MARKS_MAP
-
-
-def get_logger(name):
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                        datefmt="%Y-%m-%d %H:%M:%S")
-    return logging.getLogger(name)
+from .constant import MARKS_MAP
 
 
-def load_json_file(file_path: str):
-    if not os.path.exists(file_path):
-        raise ValueError(f'{file_path} does not exist')
-    if not file_path.endswith('.json'):
-        raise ValueError(f'{file_path} not a json file')
-    with open(file_path, mode='r', encoding='utf-8') as f:
-        data = json.load(f)
-    return data
+def build_path(*args):
+    size = len(args)
+    p = str(args[0])
+    for pp in range(1, size):
+        p = os.path.join(p, str(args[pp]))
+    return p
 
 
 def filter_special_word(s: str):
@@ -80,15 +69,78 @@ def calc_model_params(model):
     return total_params
 
 
-def save_model(model, save_path, additional_info: Dict[str, Any] = None, skip: List[str] = None):
-    model_state_dict = {k: v.cpu() if v is not None else None  # save to cpu tensors
-                        for k, v in model.state_dict().items()}
-    if skip is not None:
-        for item in skip:
-            if item in model_state_dict:
-                model_state_dict.pop(item)
+def data_2_device(data, device):
+    if isinstance(data, dict):
+        return {k: data_2_device(v, device) for k, v in data.items()}
+    elif isinstance(data, Tensor):
+        return data.to(device)
+    elif isinstance(data, list):
+        return [data_2_device(item, device) for item in data]
+    else:
+        return data
 
-    state_dict = {'model': model_state_dict}
-    if additional_info is not None:
-        state_dict.update(additional_info)
-    torch.save(state_dict, save_path)
+
+def make_infinite(dataloader):
+    while True:
+        for x in dataloader:
+            yield x
+
+
+def config_to_dict(args) -> Dict[str, Any]:
+    config_class = type(args)
+    class_attrs = {k: v for k, v in vars(config_class).items() if not k.startswith('__')}
+    instance_attrs = vars(args)
+    d = {**class_attrs}
+    d.update(**instance_attrs)
+    return d
+
+
+def check_model_config(model_name: str, ablation_mode: List[str], model_config: Dict[str, Any]):
+    if model_name == 'multi':
+        model_config['source_types'] = 2
+
+    if model_name != 'efcp':
+        return
+
+    if ablation_mode is None:
+        return
+
+    if any(item not in ['pwp', 'per', 'cs', 'ef', 'pred_loss'] for item in ablation_mode):
+        raise ValueError
+    origin_model_config = {
+        'use_persona': True,
+        'use_cs': True,
+        'use_ef': True,
+        'predict_with_persona': True,
+        'pred_comae_coef': 1.0
+    }
+
+    for item in ablation_mode:
+        if item == 'pwp':
+            origin_model_config['predict_with_persona'] = False
+        elif item == 'per':
+            origin_model_config['use_persona'] = False
+            origin_model_config['predict_with_persona'] = False
+        elif item == 'cs':
+            origin_model_config['use_cs'] = False
+        elif item == 'ef':
+            origin_model_config['use_ef'] = False
+            origin_model_config['predict_with_persona'] = False
+            origin_model_config['pred_comae_coef'] = 0.0
+        elif item == 'pred_loss':
+            origin_model_config['pred_comae_coef'] = 0.0
+        else:
+            raise NotImplementedError
+
+    model_config.update(origin_model_config)
+
+    if not (0 < model_config['source_types'] <= 2):
+        raise ValueError
+
+    if model_config['attention_fusion_type'] not in ['sw', 'linear']:
+        raise ValueError
+
+    if model_config['use_persona']:
+        model_config['source_types'] = 2
+    else:
+        model_config['source_types'] = 1

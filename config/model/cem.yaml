@@ -1,0 +1,10 @@
+defaults:
+  - _self_
+
+encoder_config:
+  num_layers: 1
+  num_heads: 2
+  total_value_depth: 40
+  total_key_depth: 40
+  filter_size: 50
+  max_length: 1000

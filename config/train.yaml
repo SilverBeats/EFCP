@@ -1,0 +1,39 @@
+# cem / vanilla / multi / comae / efcp
+model_name: &model_name efcp
+
+defaults:
+  - model: *model_name
+  - _self_
+  - hydra
+
+
+train:
+  corpus_dir: output
+  gpt2_path: ./pretrained_models/distilgpt2
+  ablation_mode:   # pwp/per/cs/pred_loss/ef/null
+
+  experiment: *model_name
+  seed: 3
+  ckpt:
+  output_dir: output
+  epochs: 5
+  optim_steps:
+  eval_interval: 1300
+  train_batch_size: 32
+  eval_batch_size: 32
+  lr: 1e-4
+  max_grad_norm: 1.0
+  warm_up: 1300
+  device: cuda
+  skip_param_save:
+    - plm.lm.weight
+  loss_label: loss
+  train_log_items:
+    - loss
+    - ppl
+  do_eval: true
+  eval_key_label: loss
+  eval_log_items:
+    - loss
+    - ppl
+

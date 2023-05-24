@@ -1,38 +1,35 @@
-import logging
-import warnings
-from collections import Counter
-from typing import List
-
-import numpy as np
 import torch
+from tqdm import tqdm
+import torch.nn as nn
+from typing import Union
+from .common import data_2_device
+
 from nltk import word_tokenize
 from nltk.translate.bleu_score import SmoothingFunction, corpus_bleu
-from torch import Tensor
-from tqdm import tqdm
+from collections import Counter
+import warnings
+from typing import List
+import numpy as np
 
-logger = logging.getLogger(__name__)
 
+@torch.no_grad()
+def eval_model_loss(model: nn.Module, dataloader, device: Union[str, torch.device]):
+    total_loss = 0
+    total_sample = 0
+    for batch in tqdm(dataloader, dynamic_ncols=True, desc='validating'):
+        batch = data_2_device(batch, device)
+        loss_sample, n_sample = model(**batch, do_eval=True)
 
-def eval_model_loss(model, dataloader, device):
-    # use the same signature with eval_model_generation
-    tot_loss = []
-    tot_sample = []
-    with torch.no_grad():
-        for step, batch in tqdm(enumerate(dataloader), total=len(dataloader), desc='validating', dynamic_ncols=True):
-            batch = {k: v.to(device) if isinstance(v, Tensor) else v for k, v in batch.items()}
-            loss_sample, n_sample, = model(**batch, do_eval=True)
-            if torch.isnan(loss_sample).sum().cpu().long().numpy() > 0:
-                print(loss_sample)
-                exit()
-            tot_loss.append(loss_sample.sum().cpu().float().numpy())
-            tot_sample.append(n_sample.sum().cpu().float().numpy())
-    # exit()
-    tot_loss = np.sum(tot_loss)
-    tot_sample = np.sum(tot_sample)
-    mean_loss = tot_loss / tot_sample
+        total_loss += loss_sample.sum().cpu().float()
+        total_sample += n_sample.sum().cpu().float()
+    mean_loss = total_loss / total_sample
     mean_ppl = np.exp(mean_loss)
     print(f'\ncur_loss={mean_loss}, cur_ppl={mean_ppl}')
-    return mean_loss, mean_ppl
+    return {
+        'loss': mean_loss,
+        'ppl': mean_ppl
+    }
+
 
 
 def my_lcs(string, sub):
@@ -138,8 +135,4 @@ class MyMetric(object):
         rl, scores = self.calc_rouge_l()
         result['f1'] = 100 * f1
         result['rouge-l'] = 100 * rl
-        result_list = {
-            'f1': scores,
-            'rouge-l': scores
-        }
-        return result, result_list
+        return result

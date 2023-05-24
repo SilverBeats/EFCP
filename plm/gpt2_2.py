@@ -1,4 +1,3 @@
-from copy import deepcopy
 from typing import List, Optional, Tuple
 
 import torch
@@ -171,8 +170,10 @@ class Block(nn.Module):
 
     def attention_pooling(self, attention_list, layer_past=None):
         if self.attention_fusion_type == 'sw':
-            return torch.mean(torch.stack(attention_list, dim=0) * self.attention_module.unsqueeze(-1).unsqueeze(-1),
-                              dim=0)
+            return torch.mean(
+                torch.stack(attention_list, dim=0) * self.attention_module.unsqueeze(-1).unsqueeze(-1),
+                dim=0
+            )
         elif self.attention_fusion_type == 'linear':
             return self.attention_module(torch.cat(attention_list, dim=-1))
         else:
@@ -181,7 +182,7 @@ class Block(nn.Module):
     def set_attention_pooling_module(self, attention_fusion_type, source_types):
         self.attention_fusion_type = attention_fusion_type
         if attention_fusion_type == 'sw':
-            self.attention_module = torch.nn.Parameter(torch.ones(source_types + 1, 1) / source_types + 1)
+            self.attention_module = torch.nn.Parameter(torch.ones(source_types + 1, 1) / (source_types + 1))
         elif attention_fusion_type == 'linear':
             self.attention_module = nn.Linear(self.hs * (source_types + 1), self.hs)
         else:
@@ -430,18 +431,21 @@ class GPT2EncoderDecoderModel(GPT2LMHeadModel):
                 return_dict: Optional[bool] = None, ):
         raise NotImplementedError
 
-    def encode(self,
-               input_ids=None,
-               inputs_embeds=None,
-               labels=None,
-               additive_embeds=None,
-               attention_mask=None,
-               token_type_ids=None,
-               position_ids=None,
-               past_key_values=None,
-               use_cache=None,
-               output_attentions=None,
-               output_hidden_states=None):
+    def encode(
+            self,
+            input_ids=None,
+            inputs_embeds=None,
+            labels=None,
+            additive_embeds=None,
+            attention_mask=None,
+            token_type_ids=None,
+            position_ids=None,
+            past_key_values=None,
+            use_cache=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            **kwargs
+    ):
         # input_ids.shape = (bs, len)
         outputs = self.encoder(input_ids=input_ids,
                                inputs_embeds=inputs_embeds,
@@ -466,7 +470,7 @@ class GPT2EncoderDecoderModel(GPT2LMHeadModel):
             # Flatten the tokens
             loss_fct = nn.CrossEntropyLoss()
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-            encode_output += (loss, )
+            encode_output += (loss,)
 
         if use_cache:
             encode_output += (outputs.past_key_values,)
@@ -474,18 +478,21 @@ class GPT2EncoderDecoderModel(GPT2LMHeadModel):
             encode_output += (outputs.attentions,)
         return encode_output
 
-    def decode(self,
-               input_ids=None,
-               inputs_embeds=None,
-               additive_embeds=None,
-               attention_mask=None,
-               token_type_ids=None,
-               position_ids=None,
-               past_key_values=None,
-               use_cache=None,
-               output_attentions=None,
-               output_hidden_states=None,
-               enc_contexts=None):
+    def decode(
+            self,
+            input_ids=None,
+            inputs_embeds=None,
+            additive_embeds=None,
+            attention_mask=None,
+            token_type_ids=None,
+            position_ids=None,
+            past_key_values=None,
+            use_cache=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            enc_contexts=None,
+            **kwargs
+    ):
         if enc_contexts is None:
             enc_contexts = []
         outputs = self.transformer(input_ids=input_ids,

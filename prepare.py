@@ -2,77 +2,62 @@ import json
 import os
 import pickle
 from collections import defaultdict
-from typing import List, Tuple
+from typing import Dict, List, Set, Tuple
 
+import hydra
 import torch
 from datasets import load_dataset
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from transformers import InputExample, RobertaForSequenceClassification, RobertaTokenizer, set_seed
-from transformers import glue_convert_examples_to_features
+from transformers import PreTrainedTokenizer
+from transformers import glue_convert_examples_to_features as convert_examples_to_features
 
 from utils.build import build_special_token_2_id, build_tokenizer_and_gpt2
-from utils.common import filter_special_word, fix_sentence, get_logger, load_json_file, norm, to_complete_sentence
+from utils.common import build_path, filter_special_word, fix_sentence, norm, to_complete_sentence
 from utils.constant import COMBINE_SPLITS, DOMAINS, DOMAIN_2_ID, RELS, SPLITS
-from utils.cs import do_expand, get_comet
-
-logger = get_logger(__name__)
+from utils.cs import Comet, build_comet, do_expand
 
 
-def extract_data_from_comae(comae_dir, output_dir):
-    logger.info('based on the speaker name to divide the data')
-
-    d = {f'{split}_{domain}': _extract_response_speaker_from_comae(f'{comae_dir}/{split}_{domain}_annotated.txt')
-         for split in SPLITS for domain in DOMAINS}
+def extract_data_from_comae(file_dir: str, output_dir: str):
+    print('Based on the speaker name to divide the data .')
+    d = {
+        f'{split}_{domain}': _extract_response_speaker_from_comae(f'{file_dir}/{split}_{domain}_annotated.txt')
+        for split in SPLITS
+        for domain in DOMAINS
+    }
     for domain in DOMAINS:
         same_in_all = d[f'train_{domain}'] & d[f'validation_{domain}'] & d[f'test_{domain}']
         same_in_train_validation = d[f'train_{domain}'] & d[f'validation_{domain}'] - same_in_all
         same_in_train_test = d[f'train_{domain}'] & d[f'test_{domain}'] - same_in_all
         same_in_validation_test = d[f'validation_{domain}'] & d[f'test_{domain}'] - same_in_all
         pure_train_speaker_name = d[f'train_{domain}'] - same_in_train_test - same_in_train_validation - same_in_all
-        pure_validation_speaker_name = d[f'validation_{domain}'] - same_in_train_validation \
-                                       - same_in_validation_test - same_in_all
+        pure_validation_speaker_name = d[
+                                           f'validation_{domain}'] - same_in_train_validation - same_in_validation_test - same_in_all
         pure_test_speaker_name = d[f'test_{domain}'] - same_in_train_test - same_in_validation_test - same_in_all
 
-        _process_comae(comae_dir, [f'train_{domain}_annotated.txt',
-                                   f'validation_{domain}_annotated.txt',
-                                   f'test_{domain}_annotated.txt'],
-                       same_in_all, output_dir, f'{domain}_same_in_all.json')
-        _process_comae(comae_dir, [f'train_{domain}_annotated.txt', f'validation_{domain}_annotated.txt'],
+        _process_comae(file_dir, [f'train_{domain}_annotated.txt', f'validation_{domain}_annotated.txt',
+                                  f'test_{domain}_annotated.txt'], same_in_all, output_dir,
+                       f'{domain}_same_in_all.json')
+        _process_comae(file_dir, [f'train_{domain}_annotated.txt', f'validation_{domain}_annotated.txt'],
                        same_in_train_validation, output_dir, f'{domain}_same_in_train_validation.json')
 
-        _process_comae(comae_dir, [f'train_{domain}_annotated.txt', f'test_{domain}_annotated.txt'], same_in_train_test,
+        _process_comae(file_dir, [f'train_{domain}_annotated.txt', f'test_{domain}_annotated.txt'], same_in_train_test,
                        output_dir, f'{domain}_same_in_train_test.json')
 
-        _process_comae(comae_dir, [f'validation_{domain}_annotated.txt', f'test_{domain}_annotated.txt'],
+        _process_comae(file_dir, [f'validation_{domain}_annotated.txt', f'test_{domain}_annotated.txt'],
                        same_in_validation_test, output_dir, f'{domain}_same_in_validation_test.json')
 
-        _process_comae(comae_dir, [f'train_{domain}_annotated.txt'],
-                       pure_train_speaker_name, output_dir, f'{domain}_pure_train.json')
-        _process_comae(comae_dir, [f'validation_{domain}_annotated.txt'],
-                       pure_validation_speaker_name, output_dir, f'{domain}_pure_validation.json')
-        _process_comae(comae_dir, [f'test_{domain}_annotated.txt'], pure_test_speaker_name,
-                       output_dir, f'{domain}_pure_test.json')
+        _process_comae(file_dir, [f'train_{domain}_annotated.txt'], pure_train_speaker_name, output_dir,
+                       f'{domain}_pure_train.json')
+        _process_comae(file_dir, [f'validation_{domain}_annotated.txt'], pure_validation_speaker_name, output_dir,
+                       f'{domain}_pure_validation.json')
+        _process_comae(file_dir, [f'test_{domain}_annotated.txt'], pure_test_speaker_name, output_dir,
+                       f'{domain}_pure_test.json')
 
 
-def _process_comae(comae_dir, file_name_list: List[str], speaker_name_set, output_dir, output_file_name):
-    assert output_file_name.endswith('.json')
-    f = open(f'{output_dir}/{output_file_name}', mode='w', encoding='utf-8')
-    arr = []
-    for file_name in file_name_list:
-        with open(f'{comae_dir}/{file_name}', mode='r', encoding='utf-8') as ff:
-            for line in tqdm(ff.readlines(), dynamic_ncols=True):
-                _line = json.loads(line)
-                dialog = _line['dialog']
-                for item in dialog:
-                    if item['speaker'] == 'sys' and item['speaker_name'] in speaker_name_set:
-                        arr.append(_line)
-    json.dump(arr, f)
-    f.close()
-    logger.info(f'{output_dir}/{output_file_name} saved')
-
-
-def _extract_response_speaker_from_comae(file_path):
+def _extract_response_speaker_from_comae(file_path: str) -> Set:
     speaker_name_set = set()
     with open(file_path, mode='r', encoding='utf-8') as f:
         for line in tqdm(f.readlines(), dynamic_ncols=True):
@@ -83,9 +68,34 @@ def _extract_response_speaker_from_comae(file_path):
     return speaker_name_set
 
 
-def divide_overlap_speaker_data(file_dir, output_dir):
-    file_name_list = ['pure_train', 'pure_validation', 'pure_test', 'same_in_all', 'same_in_train_validation',
-                      'same_in_train_test', 'same_in_validation_test']
+def _process_comae(
+        file_dir: str,
+        file_name_list: List[str],
+        speaker_name_set: Set,
+        output_dir: str,
+        output_file_name: str
+):
+    assert output_file_name.endswith('.json')
+    f = open(f'{output_dir}/{output_file_name}', mode='w', encoding='utf-8')
+    arr = []
+    for file_name in file_name_list:
+        with open(f'{file_dir}/{file_name}', mode='r', encoding='utf-8') as ff:
+            for line in tqdm(ff.readlines(), dynamic_ncols=True):
+                _line = json.loads(line)
+                dialog = _line['dialog']
+                for item in dialog:
+                    if item['speaker'] == 'sys' and item['speaker_name'] in speaker_name_set:
+                        arr.append(_line)
+    json.dump(arr, f)
+    f.close()
+    print(f'{output_dir}/{output_file_name} saved')
+
+
+def divide_overlap_speaker_data(file_dir: str, output_dir: str):
+    file_name_list = [
+        'pure_train', 'pure_validation', 'pure_test', 'same_in_all',
+        'same_in_train_validation', 'same_in_train_test', 'same_in_validation_test'
+    ]
 
     for domain in DOMAINS:
         d = {name: {'path': f'{file_dir}/{domain}_{name}.json'} for name in file_name_list}
@@ -159,15 +169,15 @@ def divide_overlap_speaker_data(file_dir, output_dir):
 
         with open(f'{output_dir}/train_{domain}.json', mode='w', encoding='utf-8') as f:
             json.dump(train, f)
-        logger.info(f'{output_dir}/train_{domain}.json is saved')
+        print(f'{output_dir}/train_{domain}.json is saved')
 
         with open(f'{output_dir}/validation_{domain}.json', mode='w', encoding='utf-8') as f:
             json.dump(validation, f)
-        logger.info(f'{output_dir}/validation_{domain}.json is saved')
+        print(f'{output_dir}/validation_{domain}.json is saved')
 
         with open(f'{output_dir}/test_{domain}.json', mode='w', encoding='utf-8') as f:
             json.dump(test, f)
-        logger.info(f'{output_dir}/test_{domain}.json is saved')
+        print(f'{output_dir}/test_{domain}.json is saved')
 
 
 def _split_list(arr: List[Tuple[str, int]], groups_num: int, is_sorted=True):
@@ -235,7 +245,7 @@ def _get_list(arr: List[Tuple[str, int]], need: float, distance: float):
 
 
 def extract_persona_from_pec(script, comae_dir, output_dir):
-    logger.info('\nExtracting persona info from pec corpus based on comae speaker......')
+    print('Extracting persona info from pec corpus based on comae speaker......')
     comae_speaker = dict()
     for domain in DOMAINS:
         comae_domain_speaker = set()
@@ -249,7 +259,7 @@ def extract_persona_from_pec(script, comae_dir, output_dir):
         d = dict()
         domain_dataset = load_dataset(script, name=domain)
         for split in SPLITS:
-            logger.info(f'\nDealing with on the {domain}-{split}')
+            print(f'Dealing with on the {domain}-{split}')
             for row in tqdm(domain_dataset[split], dynamic_ncols=True):
                 if row['response_speaker'] in comae_speaker[domain]:
                     d[row['response_speaker']] = list(filter(
@@ -259,10 +269,10 @@ def extract_persona_from_pec(script, comae_dir, output_dir):
                     comae_speaker_persona[DOMAIN_2_ID[domain]] = d
                     with open(f'{output_dir}/persona.json', 'w', encoding='utf-8') as f:
                         json.dump(comae_speaker_persona, f)
-                    logger.info(f'Saved as {output_dir}/persona.json')
+                    print(f'Saved as {output_dir}/persona.json')
 
 
-def convert_data_to_input(file_dir, output_dir):
+def convert_data_to_input(file_dir: str, output_dir: str):
     for split in SPLITS:
         for domain in DOMAINS:
             exist_key = set()
@@ -298,7 +308,22 @@ def convert_data_to_input(file_dir, output_dir):
 
             with open(f'{output_dir}/{split}_{domain}_input.json', 'w', encoding='utf-8') as f:
                 json.dump(processed_data, f)
-                logger.info(f'saved as {output_dir}/{split}_{domain}_input.json')
+                print(f'saved as {output_dir}/{split}_{domain}_input.json')
+
+
+def _get_dataloader(tokenizer, input_examples, device):
+    features = convert_examples_to_features(
+        input_examples,
+        tokenizer,
+        max_length=128,
+        label_list=['0', '1'],
+        output_mode='classification',
+    )
+    all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long).to(device)
+    all_attention_mask = torch.tensor([f.attention_mask for f in features], dtype=torch.long).to(device)
+    dataset = TensorDataset(all_input_ids, all_attention_mask)
+    dataloader = DataLoader(dataset, batch_size=32)
+    return dataloader
 
 
 def nli_persona(tokenizer, model, file_dir, output_dir, persona_data):
@@ -342,22 +367,7 @@ def nli_persona(tokenizer, model, file_dir, output_dir, persona_data):
             json.dump(processed_data, open(f'{output_dir}/{split}_{domain}_input_p.json', 'w', encoding='utf-8'))
 
 
-def _get_dataloader(tokenizer, input_examples, device):
-    features = glue_convert_examples_to_features(
-        input_examples,
-        tokenizer,
-        max_length=128,
-        label_list=['0', '1'],
-        output_mode='classification',
-    )
-    all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long).to(device)
-    all_attention_mask = torch.tensor([f.attention_mask for f in features], dtype=torch.long).to(device)
-    dataset = TensorDataset(all_input_ids, all_attention_mask)
-    dataloader = DataLoader(dataset, batch_size=32)
-    return dataloader
-
-
-def get_common_sense(model, file_dir, output_dir, **kwargs):
+def get_common_sense(model: Comet, file_dir: str, output_dir: str, **kwargs):
     for split in SPLITS:
         for domain in DOMAINS:
             file_path = f'{file_dir}/{split}_{domain}_input_p.json'
@@ -371,11 +381,15 @@ def get_common_sense(model, file_dir, output_dir, **kwargs):
                     processed_data.append(item)
             with open(f'{output_dir}/{split}_{domain}_input_p_cs.json', mode='w', encoding='utf-8') as f:
                 json.dump(processed_data, f)
-                logger.info(
-                    f'expand persona by comet success and saved as {output_dir}/{split}_{domain}_input_p_cs.json')
+                print(f'expand persona by comet success and saved as {output_dir}/{split}_{domain}_input_p_cs.json')
 
 
-def rewrite_persona_by_comet(model, file_dir, output_dir, **kwargs):
+def rewrite_persona_by_comet(
+        model: Comet,
+        file_dir: str,
+        output_dir: str,
+        **kwargs
+):
     for split in SPLITS:
         for domain in DOMAINS:
             file_path = f'{file_dir}/{split}_{domain}_input_p_cs.json'
@@ -386,18 +400,21 @@ def rewrite_persona_by_comet(model, file_dir, output_dir, **kwargs):
                     processed_data.append(item)
             with open(f'{output_dir}/{split}_{domain}_input_p_cs_cs.json', mode='w', encoding='utf-8') as f:
                 json.dump(processed_data, f)
-                logger.info(
-                    f'expand persona by comet success and saved as {output_dir}/{split}_{domain}_input_p_cs_cs.json')
+                print(f'expand persona by comet success and saved as {output_dir}/{split}_{domain}_input_p_cs_cs.json')
 
 
-def convert_input_to_ids(tokenizer, sp_token_id_map, file_dir, output_dir, **kwargs):
+def convert_input_to_ids(
+        tokenizer: PreTrainedTokenizer,
+        file_dir: str,
+        output_dir: str,
+        **kwargs
+):
     max_ctx_len = kwargs.get('max_ctx_len', 150)
     max_tgt_len = kwargs.get('max_tgt_len', 40)
-    eos = sp_token_id_map['eos']
-    usr = sp_token_id_map['usr']
-    sys = sp_token_id_map['sys']
-    p = sp_token_id_map['p']
-    cls = sp_token_id_map['cls']
+    eos = tokenizer.eos_token_id
+    usr = tokenizer.usr_token_id
+    sys = tokenizer.sys_token_id
+    p = tokenizer.persona_token_id
 
     for split in SPLITS:
         for domain in DOMAINS:
@@ -412,7 +429,7 @@ def convert_input_to_ids(tokenizer, sp_token_id_map, file_dir, output_dir, **kwa
                     if len(ctx) == 0 or len(tgt) == 0:
                         continue
                     feature.update({
-                        'ctx_input_ids': tokenizer(ctx)['input_ids'][-max_ctx_len:],
+                        'ctx_input_ids': tokenizer(ctx)['input_ids'][-max_ctx_len:] + [eos],
                         'tgt_label_ids': tokenizer(tgt)['input_ids'][-max_tgt_len:] + [eos]
                     })
                     feature['ctx_len'] = len(feature['ctx_input_ids'])
@@ -439,10 +456,10 @@ def convert_input_to_ids(tokenizer, sp_token_id_map, file_dir, output_dir, **kwa
                     processed_data.append(feature)
             with open(f'{output_dir}/{split}_{domain}.pkl', 'wb') as f:
                 pickle.dump(processed_data, f)
-                logger.info(f'saved as {output_dir}/{split}_{domain}.pkl')
+                print(f'saved as {output_dir}/{split}_{domain}.pkl')
 
 
-def combine_split(file_dir, output_dir):
+def combine_split(file_dir: str, output_dir: str):
     for split in SPLITS:
         data = []
         for domain in DOMAINS:
@@ -451,53 +468,59 @@ def combine_split(file_dir, output_dir):
             if split not in COMBINE_SPLITS:
                 with open(f'{output_dir}/{split}_{domain}.pkl', mode='wb') as f:
                     pickle.dump(data, f)
-                    logger.info(f'{output_dir}/{split}_{domain}.pkl is saved')
+                    print(f'{output_dir}/{split}_{domain}.pkl is saved')
                     data = []
         if split in COMBINE_SPLITS:
             with open(f'{output_dir}/{split}.pkl', mode='wb') as f:
                 pickle.dump(data, f)
-                logger.info(f'{split} combine success, and {output_dir}/{split}.pkl is saved')
+                print(f'{split} combine success, and {output_dir}/{split}.pkl is saved')
 
 
-if __name__ == '__main__':
-    args = load_json_file('config/prepare.json')
-    set_seed(args['seed'])
-    output_dir = args['output_dir']
-    # where to save temporary files
-    tmp_dir = os.path.join(output_dir, 'tmp_file')
+@hydra.main(version_base=None, config_path='config', config_name='prepare')
+def main(cfg: DictConfig):
+    cfg: dict = OmegaConf.to_container(cfg, resolve=True, enum_to_str=True)
+
+    set_seed(cfg['seed'])
+    output_dir = cfg['output']
+    tmp_dir = build_path(output_dir, 'tmp_file')
 
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
     if not os.path.exists(tmp_dir):
         os.makedirs(tmp_dir, exist_ok=True)
 
-    """
+    r"""
     Step 1: 
         Comae corpus were extracted and divided according to the responder. 
         Ensure that the same responder only appears in a split.
+        Check the code to get output file path
     """
-    extract_data_from_comae(args['comae_dir'], tmp_dir)
+    extract_data_from_comae(cfg['comae_dir'], tmp_dir)
     divide_overlap_speaker_data(tmp_dir, tmp_dir)
-    """
+
+    r"""
     Step 2:
         Extract the persona information from the pec base on comae corpus.
         It's independent of the previous step.
         You can execute this step before the extract_data_from_comae or after the divide_overlap_speaker_data.
         The output file is 'output/tmp_file/persona.json'
     """
-    extract_persona_from_pec(args['pec_script'], args['comae_dir'], tmp_dir)
-    """
+    extract_persona_from_pec(script=cfg['pec_script'],
+                             comae_dir=cfg['comae_dir'],
+                             output_dir=tmp_dir)
+
+    r"""
     Step 3:
         Change the corpus to json file. 
         The output file path is 'output/tmp_file/domain_split_input.json'
         domain in {happy, offmychest}; split in {train, validation, test}
     """
     convert_data_to_input(tmp_dir, tmp_dir)
-    """
+    r"""
     Step 4:
         Use the NLI Model provided by https://github.com/caoyu-noob/D3 to filter persona sentence.
         Here, we only keep only the persona that is most relevant to response.
-        After filtering, there is a case where there is no persona sentence associated with response. 
+        After filtering,There is a case where there is no persona sentence associated with response. 
         For this part of the data, we throw it away.
         [data size]            after/original
         train_happy:            48083/78993
@@ -508,39 +531,50 @@ if __name__ == '__main__':
         test_offmychest:        7095/10302
     """
     persona_data = json.load(open(f'{tmp_dir}/persona.json', 'r', encoding='utf-8'))
-    nli_tokenizer = RobertaTokenizer.from_pretrained(args['nli_path'])
-    nli_model = RobertaForSequenceClassification.from_pretrained(args['nli_path'])
+    nli_tokenizer = RobertaTokenizer.from_pretrained(cfg['nli_path'])
+    nli_model = RobertaForSequenceClassification.from_pretrained(cfg['nli_path'])
     nli_persona(tokenizer=nli_tokenizer,
                 model=nli_model,
                 file_dir=tmp_dir,
                 output_dir=tmp_dir,
                 persona_data=persona_data)
-    """
+
+    r"""
     Step 5:
         Use COMET-BART to rewrite context to get common sense.
         Use COMET-BART to rewrite persona sentence to get more information
     """
-    comet = get_comet(args['comet_path'])
-    get_common_sense(model=comet,
-                     file_dir=tmp_dir,
-                     output_dir=tmp_dir,
-                     num_generate=args['num_generate'])
-    rewrite_persona_by_comet(model=comet,
-                             file_dir=tmp_dir,
-                             output_dir=tmp_dir,
-                             num_generate=args['num_generate'])
+    comet = build_comet(cfg['comet_path'])
+    get_common_sense(
+        model=comet,
+        file_dir=tmp_dir,
+        output_dir=tmp_dir,
+        decode_method=cfg['decode_method'],
+        num_generate=cfg['num_generate']
+    )
+    rewrite_persona_by_comet(
+        model=comet,
+        file_dir=tmp_dir,
+        output_dir=tmp_dir,
+        decode_method=cfg['decode_method'],
+        num_generate=cfg['num_generate']
+    )
+    r"""
+    Step 6:
+        the last step is convert input to id.
+        The output file path is split_domain.pkl.
+        After combining split, we get train.pkl, validation.pkl, test_happy.pkl and test_offmychest.pkl
     """
-   Step 6:
-       the last step is convert input to id.
-       The output file path is split_domain.pkl.
-       After combining split, we get train.pkl, validation.pkl, test_happy.pkl and test_offmychest.pkl
-   """
-    gpt2_tokenizer = build_tokenizer_and_gpt2(args['gpt2_path'], only_tokenizer=True)
-    sp_token_id_map = build_special_token_2_id(gpt2_tokenizer)
-    convert_input_to_ids(tokenizer=gpt2_tokenizer,
-                         sp_token_id_map=sp_token_id_map,
-                         file_dir=tmp_dir,
-                         output_dir=tmp_dir,
-                         max_ctx_len=args['max_ctx_len'],
-                         max_tgt_len=args['max_tgt_len'])
+    gpt2_tokenizer = build_tokenizer_and_gpt2(cfg['gpt2_path'], True)
+    convert_input_to_ids(
+        tokenizer=gpt2_tokenizer,
+        file_dir=tmp_dir,
+        output_dir=tmp_dir,
+        max_ctx_len=cfg['max_ctx_len'],
+        max_tgt_len=cfg['max_tgt_len']
+    )
     combine_split(tmp_dir, output_dir)
+
+
+if __name__ == '__main__':
+    main()

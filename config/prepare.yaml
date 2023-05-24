@@ -1,0 +1,15 @@
+defaults:
+  - _self_
+  - hydra
+
+seed: 3
+comae_dir: data/CoMAE
+pec_script: script/pec.py
+output_dir: output
+nli_path: pretrained_models/nli
+gpt2_path: pretrained_models/gpt2
+comet_path: pretrained_models/comet-bart
+num_generate: 5
+decode_method: beam
+max_ctx_len: 150
+max_tgt_len: 40
