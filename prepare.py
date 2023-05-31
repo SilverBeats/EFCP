@@ -2,7 +2,7 @@ import json
 import os
 import pickle
 from collections import defaultdict
-from typing import Dict, List, Set, Tuple
+from typing import List, Set, Tuple
 
 import hydra
 import torch
@@ -14,7 +14,7 @@ from transformers import InputExample, RobertaForSequenceClassification, Roberta
 from transformers import PreTrainedTokenizer
 from transformers import glue_convert_examples_to_features as convert_examples_to_features
 
-from utils.build import build_special_token_2_id, build_tokenizer_and_gpt2
+from utils.build import build_tokenizer_and_gpt2
 from utils.common import build_path, filter_special_word, fix_sentence, norm, to_complete_sentence
 from utils.constant import COMBINE_SPLITS, DOMAINS, DOMAIN_2_ID, RELS, SPLITS
 from utils.cs import Comet, build_comet, do_expand
@@ -423,13 +423,14 @@ def convert_input_to_ids(
             with open(file_path, 'r', encoding='utf-8') as f:
                 for item in tqdm(json.load(f), dynamic_ncols=True, postfix=f'convert {file_path}...'):
                     feature = {k: item[k] for k in
-                               ['ctx_da', 'ctx_em', 'tgt_er', 'tgt_ex', 'tgt_in', 'tgt_da', 'tgt_em']}
+                               ['ctx_da', 'ctx_em', 'tgt_er', 'tgt_ex', 'tgt_ip', 'tgt_da', 'tgt_em']}
                     ctx = fix_sentence(item['ctx'])
                     tgt = fix_sentence(item['tgt'])
-                    if len(ctx) == 0 or len(tgt) == 0:
+                    persona = fix_sentence(item['persona']['original'])
+                    if len(ctx) == 0 or len(tgt) == 0 or len(persona):
                         continue
                     feature.update({
-                        'ctx_input_ids': tokenizer(ctx)['input_ids'][-max_ctx_len:] + [eos],
+                        'ctx_input_ids': tokenizer(ctx)['input_ids'][-max_ctx_len:],
                         'tgt_label_ids': tokenizer(tgt)['input_ids'][-max_tgt_len:] + [eos]
                     })
                     feature['ctx_len'] = len(feature['ctx_input_ids'])
@@ -481,7 +482,7 @@ def main(cfg: DictConfig):
     cfg: dict = OmegaConf.to_container(cfg, resolve=True, enum_to_str=True)
 
     set_seed(cfg['seed'])
-    output_dir = cfg['output']
+    output_dir = cfg['output_dir']
     tmp_dir = build_path(output_dir, 'tmp_file')
 
     if not os.path.exists(output_dir):
@@ -505,9 +506,11 @@ def main(cfg: DictConfig):
         You can execute this step before the extract_data_from_comae or after the divide_overlap_speaker_data.
         The output file is 'output/tmp_file/persona.json'
     """
-    extract_persona_from_pec(script=cfg['pec_script'],
-                             comae_dir=cfg['comae_dir'],
-                             output_dir=tmp_dir)
+    extract_persona_from_pec(
+        script=cfg['pec_script'],
+        comae_dir=cfg['comae_dir'],
+        output_dir=tmp_dir
+    )
 
     r"""
     Step 3:
@@ -533,11 +536,13 @@ def main(cfg: DictConfig):
     persona_data = json.load(open(f'{tmp_dir}/persona.json', 'r', encoding='utf-8'))
     nli_tokenizer = RobertaTokenizer.from_pretrained(cfg['nli_path'])
     nli_model = RobertaForSequenceClassification.from_pretrained(cfg['nli_path'])
-    nli_persona(tokenizer=nli_tokenizer,
-                model=nli_model,
-                file_dir=tmp_dir,
-                output_dir=tmp_dir,
-                persona_data=persona_data)
+    nli_persona(
+        tokenizer=nli_tokenizer,
+        model=nli_model,
+        file_dir=tmp_dir,
+        output_dir=tmp_dir,
+        persona_data=persona_data
+    )
 
     r"""
     Step 5:

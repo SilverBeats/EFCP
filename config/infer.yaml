@@ -17,11 +17,17 @@ infer:
   infer_batch_size: 32
   add_nlgeval: false
   add_bert_score: true
+  add_bart_score: true
   bert_score_config:
       model_type: ./pretrained_models/roberta-large
       num_layers: 17
       batch_size: 32
       lang: en
+  bart_score_config:
+    checkpoint: ./pretrained_models/bart-score
+    path:
+    batch_size: 32
+    device: cuda
 
 generate_config:
   min_length: 5

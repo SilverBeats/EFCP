@@ -1,7 +1,7 @@
 DOMAINS = ['happy', 'offmychest']
 DOMAIN_2_ID = {'happy': 0, 'offmychest': 1}
 SPLITS = ['train', 'validation', 'test']
-COMBINE_SPLITS = ['train', 'validation']
+COMBINE_SPLITS = ['train', 'validation', 'test']
 
 SPECIAL_TOKEN = {
     'bos_token': '<bos>',
@@ -30,7 +30,7 @@ MARKS_MAP = {
     '\u2019': "'"
 }
 
-RELS = ['xAttr', 'xReact', 'xWant', 'xEffect', 'xNeed', 'xIntent']
+RELS = ['xAttr', 'xReact', 'xIntent', 'xNeed', 'xWant', 'xEffect']
 
 ACC_LIST = [
     'er_top1', 'ex_top1', 'ip_top1',

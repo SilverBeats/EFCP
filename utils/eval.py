@@ -1,15 +1,17 @@
-import torch
-from tqdm import tqdm
-import torch.nn as nn
-from typing import Union
-from .common import data_2_device
-
-from nltk import word_tokenize
-from nltk.translate.bleu_score import SmoothingFunction, corpus_bleu
-from collections import Counter
+import traceback
 import warnings
+from typing import Dict
 from typing import List
+from typing import Union
+
 import numpy as np
+import torch
+import torch.nn as nn
+from nltk import word_tokenize
+from tqdm import tqdm
+from transformers import BartForConditionalGeneration, BartTokenizer
+
+from .common import data_2_device
 
 
 @torch.no_grad()
@@ -31,52 +33,47 @@ def eval_model_loss(model: nn.Module, dataloader, device: Union[str, torch.devic
     }
 
 
+class MyMetric:
+    def __init__(
+            self,
+            use_nlgeval: bool = False,
+            use_bertscore: bool = False,
+            use_bartscore: bool = False,
+            **kwargs
+    ):
+        self.refs: List[str] = []
+        self.hyps: List[str] = []
 
-def my_lcs(string, sub):
-    """
-    Calculates longest common subsequence for a pair of tokenized strings
-    :param string : list of str : tokens from a string split using whitespace
-    :param sub : list of str : shorter string, also split using whitespace
-    :returns: length (list of int): length of the longest common subsequence between the two strings
+        self.use_nlgeval = use_nlgeval
+        self.use_bertscore = use_bertscore
+        self.use_bartscore = use_bartscore
+        if use_nlgeval:
+            from nlgeval import NLGEval
+            self.nlgeval = NLGEval(no_skipthoughts=True)
 
-    Note: my_lcs only gives length of the longest common subsequence, not the actual LCS
-    """
-    if len(string) < len(sub):
-        sub, string = string, sub
+        if use_bartscore:
+            self.bart_score_config = {
+                'checkpoint': kwargs.get('checkpoint'),
+                'path': kwargs.get('path', None),
+                'batch_size': kwargs.get('batch_size', 32),
+                'device': 'cuda:0' if torch.cuda.is_available() else 'cpu'
+            }
+            self.bart_scorer = BARTScorer(**self.bart_score_config)
 
-    lengths = [[0 for _ in range(0, len(sub) + 1)] for _ in range(0, len(string) + 1)]
+        if use_bertscore:
+            self.bert_score_config = {
+                'model_type': kwargs.get('model_type'),
+                'num_layers': kwargs.get('num_layers'),
+                'batch_size': kwargs.get('batch_size', 32),
+                'lang': kwargs.get('lang', 'en'),
+                'device': 'cuda:0' if torch.cuda.is_available() else 'cpu'
+            }
 
-    for j in range(1, len(sub) + 1):
-        for i in range(1, len(string) + 1):
-            if string[i - 1] == sub[j - 1]:
-                lengths[i][j] = lengths[i - 1][j - 1] + 1
-            else:
-                lengths[i][j] = max(lengths[i - 1][j], lengths[i][j - 1])
+    def forword(self, ref: str, hyp: str):
+        self.refs.append(word_tokenize(ref.lower()))
+        self.hyps.append(word_tokenize(hyp.lower()))
 
-    return lengths[len(string)][len(sub)]
-
-
-class MyMetric(object):
-    def __init__(self):
-        self.refs = []
-        self.hyps = []
-
-    def forword(self, refs: List[str], hyp: str):
-        assert len(refs) == 1
-        if len(refs[0]) > 0 and len(hyp) > 0:
-            self.refs.append([word_tokenize(ref.lower()) for ref in refs])
-            self.hyps.append(word_tokenize(hyp.lower()))
-
-    def calc_bleu_k(self, k):
-        weights = [1. / k] * k + (4 - k) * [0.]
-        try:
-            bleu = corpus_bleu(self.refs, self.hyps, weights=weights, smoothing_function=SmoothingFunction().method3)
-        except ZeroDivisionError as _:
-            warnings.warn('the bleu is invalid')
-            bleu = 0.
-        return bleu
-
-    def calc_distinct_k(self, k):
+    def calc_distinct_k(self, k) -> float:
         assert k >= 1
         d = {}
         tot = 0
@@ -92,47 +89,151 @@ class MyMetric(object):
             dist = 0.
         return dist
 
-    def calc_unigram_f1(self):
-        f1_scores = []
-        for hyp, refs in zip(self.hyps, self.refs):
-            scores = []
-            for ref in refs:
-                cross = Counter(hyp) & Counter(ref)
-                cross = sum(cross.values())
-                p = cross / max(len(hyp), 1e-10)
-                r = cross / max(len(ref), 1e-10)
-                f1 = 2 * p * r / max(p + r, 1e-10)
-                scores.append(f1)
-            f1_scores.append(max(scores))
-        return np.mean(f1_scores), f1_scores
-
-    def calc_rouge_l(self, beta=1.2):
-        scores = []
-        for hyp, refs in zip(self.hyps, self.refs):
-            prec = []
-            rec = []
-            for ref in refs:
-                lcs = my_lcs(ref, hyp)
-                prec.append(lcs / max(len(hyp), 1e-10))
-                rec.append(lcs / max(len(ref), 1e-10))
-            prec_max = max(prec)
-            rec_max = max(rec)
-            if prec_max != 0 and rec_max != 0:
-                score = ((1 + beta ** 2) * prec_max * rec_max) / float(rec_max + beta ** 2 * prec_max)
-            else:
-                score = 0.0
-            scores.append(score)
-        return np.mean(scores), scores
-
-    def close(self):
-        result = {
+    def close(self) -> Dict[str, float]:
+        metric_res = {
             'length': float(np.mean(list(map(len, self.hyps)))),
             **{f"dist-{k}": 100 * self.calc_distinct_k(k) for k in range(1, 5)},
-            **{f"bleu-{k}": 100 * self.calc_bleu_k(k) for k in range(1, 5)}
         }
+        if self.use_bertscore:
+            from bert_score import score
+            print('use bert score')
+            P, R, F = score(
+                cands=self.hyps,
+                refs=self.refs,
+                **self.bert_score_config
+            )
+            metric_res.update({
+                'bert_score_P': round(P.mean().item(), 6),
+                'bert_score_R': round(R.mean().item(), 6),
+                'bert_score_F': round(F.mean().item(), 6),
+            })
+        if self.use_nlgeval:
+            print('use nlgeval')
+            r = self.nlgeval.compute_metrics(
+                ref_list=self.refs,
+                hyp_list=self.hyps
+            )
+            metric_res.update(r)
 
-        f1, scores = self.calc_unigram_f1()
-        rl, scores = self.calc_rouge_l()
-        result['f1'] = 100 * f1
-        result['rouge-l'] = 100 * rl
-        return result
+        if self.use_bartscore:
+            print('use bart score')
+            r = self.bart_scorer.score(self.refs, self.hyps)
+            metric_res.update(r)
+
+        return metric_res
+
+
+class BARTScorer:
+    r"""Code from https://github.com/neulab/BARTScore"""
+
+    def __init__(
+            self,
+            device='cuda:0',
+            max_length=1024,
+            checkpoint='facebook/bart-large-cnn',
+            path: str = None,
+            batch_size: int = 32,
+            **kwargs
+    ):
+        # Set up model
+        self.device = device
+        self.max_length = max_length
+        self.tokenizer = BartTokenizer.from_pretrained(checkpoint)
+        self.model = BartForConditionalGeneration.from_pretrained(checkpoint)
+        self.model.eval()
+        self.model.to(device)
+        self.batch_size = batch_size
+        # Set up loss
+        self.loss_fct = nn.NLLLoss(reduction='none', ignore_index=self.model.config.pad_token_id)
+        self.lsm = nn.LogSoftmax(dim=1)
+
+        if path is not None:
+            self.load(path)
+
+    def load(self, path):
+        """ Load model from paraphrase fine-tuning """
+        self.model.load_state_dict(torch.load(path, map_location=self.device))
+
+    def score(self, srcs, tgts) -> float:
+        """ Score a batch of examples """
+        score_list = []
+        for i in tqdm( range(0, len(srcs), self.batch_size), desc='bart_score ...'):
+            src_list = srcs[i: i + self.batch_size]
+            tgt_list = tgts[i: i + self.batch_size]
+            try:
+                with torch.no_grad():
+                    encoded_src = self.tokenizer(
+                        src_list,
+                        max_length=self.max_length,
+                        truncation=True,
+                        padding=True,
+                        return_tensors='pt'
+                    )
+                    encoded_tgt = self.tokenizer(
+                        tgt_list,
+                        max_length=self.max_length,
+                        truncation=True,
+                        padding=True,
+                        return_tensors='pt'
+                    )
+                    src_tokens = encoded_src['input_ids'].to(self.device)
+                    src_mask = encoded_src['attention_mask'].to(self.device)
+
+                    tgt_tokens = encoded_tgt['input_ids'].to(self.device)
+                    tgt_mask = encoded_tgt['attention_mask']
+                    tgt_len = tgt_mask.sum(dim=1).to(self.device)
+
+                    output = self.model(
+                        input_ids=src_tokens,
+                        attention_mask=src_mask,
+                        labels=tgt_tokens
+                    )
+                    logits = output.logits.view(-1, self.model.config.vocab_size)
+                    loss = self.loss_fct(self.lsm(logits), tgt_tokens.view(-1))
+                    loss = loss.view(tgt_tokens.shape[0], -1)
+                    loss = loss.sum(dim=1) / tgt_len
+                    curr_score_list = [-x.item() for x in loss]
+                    score_list += curr_score_list
+
+            except RuntimeError:
+                traceback.print_exc()
+                print(f'source: {src_list}')
+                print(f'target: {tgt_list}')
+                exit(0)
+        return np.mean(score_list, axis=0)
+
+    def multi_ref_score(self, srcs, tgts: List[List[str]], agg="mean"):
+        # Assert we have the same number of references
+        ref_nums = [len(x) for x in tgts]
+        if len(set(ref_nums)) > 1:
+            raise Exception("You have different number of references per test sample.")
+
+        ref_num = len(tgts[0])
+        score_matrix = []
+        for i in range(ref_num):
+            curr_tgts = [x[i] for x in tgts]
+            scores = self.score(srcs, curr_tgts)
+            score_matrix.append(scores)
+        if agg == "mean":
+            score_list = np.mean(score_matrix, axis=0)
+        elif agg == "max":
+            score_list = np.max(score_matrix, axis=0)
+        else:
+            raise NotImplementedError
+        return list(score_list)
+
+    def test(self):
+        """ Test """
+        src_list = [
+            'This is a very good idea. Although simple, but very insightful.',
+            'Can I take a look?',
+            'Do not trust him, he is a liar.'
+        ]
+
+        tgt_list = [
+            "That's stupid.",
+            "What's the problem?",
+            'He is trustworthy.'
+        ]
+
+        print(self.score(src_list, tgt_list))

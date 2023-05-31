@@ -2,6 +2,7 @@ import json
 import os
 from functools import partial
 from pprint import pp
+from typing import Any, Dict
 from typing import List
 
 import hydra
@@ -12,19 +13,20 @@ from sklearn.metrics import confusion_matrix
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import PreTrainedTokenizer
+
 from utils.build import build_model, build_tokenizer_and_gpt2
 from utils.common import check_model_config, data_2_device
 from utils.constant import ACC_LIST, DOMAINS
 from utils.eval import MyMetric, eval_model_loss
 from utils.inputter import PECDataset, collate_fn
-from typing import Dict, Any
+
 
 def prepare_dataloader(
         args: Dict[str, Any],
         tokenizer: PreTrainedTokenizer,
         split: str,
         do_gen: bool,
-        use_cs:bool
+        use_cs: bool
 ):
     dataset = PECDataset(args['corpus_dir'], split, None)
     batch_size = args['infer_batch_size']
@@ -107,7 +109,7 @@ def main(cfg: DictConfig):
         generations: List[str] = tokenizer.batch_decode(generations, skip_special_tokens=True)
 
         for p, r, g, persona in zip(posts, references, generations, batch['persona_input_ids']):
-            metric.forword([r], g)
+            metric.forword(r, g)
             res.append({
                 'post': p,
                 'response': r,
@@ -135,34 +137,6 @@ def main(cfg: DictConfig):
 
     print('Start of automatic evaluation')
     metric_res.update(metric.close())
-
-    if infer_config['add_nlgeval'] or infer_config['add_bert_score']:
-        refs = []
-        hyps = []
-        for item in res:
-            ref = ' '.join(nltk.word_tokenize(item['response'].lower()))
-            hyp = ' '.join(nltk.word_tokenize(item['generation'].lower()))
-            if ref == '' or hyp == '':
-                continue
-            refs.append(ref)
-            hyps.append(hyp)
-        if infer_config['add_nlgeval']:
-            print('Using nlgeval')
-            from nlgeval import NLGEval
-
-            nlgeval = NLGEval(no_skipthoughts=True)
-            metrics_dict = nlgeval.compute_metrics(ref_list=[refs], hyp_list=hyps)
-            metric_res.update(metrics_dict)
-            print(f'nlgeval done')
-        if infer_config['add_bert_score']:
-            from bert_score import score
-
-            P, R, F = score(cands=hyps, refs=refs, device=device, **infer_config['bert_score_config'])
-            metric_res.update({
-                'bert_score_P': round(P.mean().item(), 6),
-                'bert_score_R': round(R.mean().item(), 6),
-                'bert_score_F': round(F.mean().item(), 6),
-            })
 
     with open(f'{output_dir}/metric.json', mode='w', encoding='utf-8') as f:
         json.dump(metric_res, f, ensure_ascii=False, indent=4, sort_keys=True)
