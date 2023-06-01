@@ -5,3 +5,4 @@ defaults:
 source_types: 2
 attention_fusion_type: sw  # sw or linear
 share_embedding: false
+use_cs: false

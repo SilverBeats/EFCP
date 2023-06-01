@@ -1,4 +1,4 @@
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 import torch
 import torch.nn as nn
@@ -27,19 +27,19 @@ class EFCP(BaseModel):
 
         if model_config['use_ef']:
             self.pef_module = PredictEmpathyFactorsModule(self.hs, 'elu')
-
             self.ctx_summary_head = SequenceSummary(self.config)
+            max_len = 256
+            # ctx[i] = w0 * ctx[i] + w1 * da[i] + w2 * em[i]
+            self.ctx_ef_dynamic_weights = nn.Parameter(torch.ones(3, max_len) / max_len)
+            # tgt[i] = w0 * tgt[i] + w1 * da[i] + w2 * em[i] * w3 * cm[i]
+            self.tgt_ef_dynamic_weights = nn.Parameter(torch.ones(4, max_len) / max_len)
+
             if model_config['predict_with_persona']:
                 self.persona_summary_head = SequenceSummary(self.config)
-                self.cp_linear = nn.Sequential(nn.Linear(2 * self.hs, self.hs), nn.ELU())
+                self.cp_linear = nn.Sequential(nn.Linear(2, self.hs, self.hs), nn.ELU())
 
-    def fuse_ctx_cs(
-            self,
-            ctx_h_s: Tensor,
-            cs_h_s_dict: Dict[str, Tensor],
-            cs_true_len: Dict[str, Tensor] = None
-    ) -> Tensor:
-        return self.acs(ctx_h_s, cs_h_s_dict, cs_true_len)
+        if model_config['use_cs']:
+            self.cross_attn = nn.MultiheadAttention(self.config.n_embd, 12, batch_first=True)
 
     def fuse_ctx_persona(
             self,
@@ -54,43 +54,67 @@ class EFCP(BaseModel):
             return ctx_last_token_hidden_states
 
         persona_last_token_hidden_states = self.persona_summary_head(p_h_s, persona_len - 1)
-        t = self.cp_linear(torch.cat([ctx_last_token_hidden_states, persona_last_token_hidden_states], dim=-1))
-
+        t = torch.cat([ctx_last_token_hidden_states, persona_last_token_hidden_states], dim=-1)
+        t = self.cp_linear(torch.sigmoid(t) * t, dim=-1)
         return t
 
     def forward_step(
             self,
-            ctx_input_ids: Tensor,  # (bs, _len)
+            ctx_input_ids: Tensor,
             ctx_token_type_ids: Tensor,
-            ctx_len: Tensor,  # (bs, )
+            ctx_len: Tensor,
             ctx_da: Tensor,
             ctx_em: Tensor,
+            ctx_cs_input_ids: Tensor,
+            ctx_cs_token_type_ids: Tensor,
+            ctx_cs_len: Tensor,
             persona_input_ids: Tensor,
-            persona_len: Tensor,  # (bs, )
+            persona_len: Tensor,
             persona_token_type_ids: Tensor,
             tgt_input_ids: Tensor,
             tgt_token_type_ids: Tensor,
-            tgt_da: Tensor,  # (bs, 1)
+            tgt_da: Tensor,
             tgt_em: Tensor,
             tgt_er: Tensor,
             tgt_ip: Tensor,
             tgt_ex: Tensor,
-            **kwargs
     ):
-        ctx_additive_embeds = None
         tgt_additive_embeds = None
         result_info = None
 
+        ctx_seq_len = ctx_input_ids.shape[1]
+
         if self.model_config['use_ef']:
-            # (bs, 1, hs)
-            ctx_additive_embeds = self.pef_module.embed_da(ctx_da) + \
-                                  self.pef_module.embed_em(ctx_em)
+            # (bs, ctx_seq_len, hs)
+            ctx_embed = self.word_embedding(ctx_input_ids)
+            ctx_da_embed = self.pef_module.embed_da(ctx_da).expand(-1, ctx_seq_len, -1)
+            ctx_em_embed = self.pef_module.embed_em(ctx_em).expand(-1, ctx_seq_len, -1)
+            # (bs, 3, ctx_seq_len, hs)
+            ctx_ef_tw = self.ctx_ef_dynamic_weights[:, :ctx_seq_len]
+            ctx_inputs_embeds = torch.stack([
+                ctx_embed, ctx_da_embed, ctx_em_embed
+            ], dim=1) * ctx_ef_tw.view(1, -1, ctx_seq_len, 1)
+            # (bs, ctx_seq_len, hs)
+            ctx_inputs_embeds = ctx_inputs_embeds.sum(1) / ctx_ef_tw.sum(0).view(1, -1, 1)
+        else:
+            ctx_inputs_embeds = self.word_embedding(ctx_input_ids)
 
         ctx_h_s = self.encode_sequence(
-            input_ids=ctx_input_ids,
-            additive_embeds=ctx_additive_embeds,
+            inputs_embeds=ctx_inputs_embeds,
             token_type_ids=ctx_token_type_ids
         )[0]
+
+        if self.model_config['use_cs']:
+            cs_h_s = self.encode_sequence(
+                input_ids=ctx_cs_input_ids,
+                token_type_ids=ctx_cs_token_type_ids
+            )
+            ctx_h_s = self.cross_attn(
+                query=ctx_h_s,
+                key=cs_h_s,
+                value=cs_h_s,
+                need_weights=False
+            )[0]
 
         if self.model_config['use_persona']:
             p_h_s = self.encode_sequence(
@@ -103,16 +127,14 @@ class EFCP(BaseModel):
                 # (bs, hs)
                 t = self.fuse_ctx_persona(ctx_h_s, ctx_len, p_h_s, persona_len)
             else:
-                # (bs, hs)
                 t = self.fuse_ctx_persona(ctx_h_s, ctx_len)
             result_info = self.pef_module(t, tgt_er, tgt_ip, tgt_ex, tgt_da, tgt_em)
-            # (bs, hs)
-            tgt_additive_embeds = result_info.pop('cm_embeds') + \
-                                  result_info.pop('da_embeds') + \
-                                  result_info.pop('em_embeds')
-            # (bs, tgt_len, bs)
-            tgt_additive_embeds = tgt_additive_embeds.unsqueeze(1).expand(-1, tgt_input_ids.shape[1], -1)
-
+            # (bs, 3, tgt_seq_len, hs)
+            tgt_additive_embeds = torch.stack([
+                result_info.pop('da_embeds'),
+                result_info.pop('em_embeds'),
+                result_info.pop('cm_embeds'),
+            ], dim=1).unsqueeze(2).expand(-1, -1, tgt_input_ids.shape[-1], -1)
             result_info['pred_ef_loss'] = result_info.pop('loss')
 
         enc_contexts = [ctx_h_s]
@@ -134,14 +156,16 @@ class EFCP(BaseModel):
 
     def forward(
             self,
-            ctx_input_ids: Tensor,  # (bs, _len)
+            ctx_input_ids: Tensor,
             ctx_token_type_ids: Tensor,
-            ctx_len: Tensor,  # (bs, )
+            ctx_len: Tensor,
             ctx_da: Tensor,
             ctx_em: Tensor,
-            ctx_cs_dict: Dict[str, Tensor],
+            ctx_cs_input_ids: Tensor,
+            ctx_cs_token_type_ids: Tensor,
+            ctx_cs_len: Tensor,
             persona_input_ids: Tensor,
-            persona_len: Tensor,  # (bs, )
+            persona_len: Tensor,
             persona_token_type_ids: Tensor,
             tgt_input_ids: Tensor,
             tgt_token_type_ids: Tensor,
@@ -160,6 +184,9 @@ class EFCP(BaseModel):
             ctx_len=ctx_len,
             ctx_da=ctx_da,
             ctx_em=ctx_em,
+            ctx_cs_input_ids=ctx_cs_input_ids,
+            ctx_cs_token_type_ids=ctx_cs_token_type_ids,
+            ctx_cs_len=ctx_cs_len,
             persona_input_ids=persona_input_ids,
             persona_len=persona_len,
             persona_token_type_ids=persona_token_type_ids,
@@ -171,9 +198,17 @@ class EFCP(BaseModel):
             tgt_ip=tgt_ip,
             tgt_ex=tgt_ex
         )
+        tgt_seq_len = tgt_input_ids.shape[1]
+        if self.model_config['use_ef']:
+            tgt_ef_tw = self.tgt_ef_dynamic_weights[:, :tgt_seq_len]
+            tgt_input_embeds = torch.cat([
+                self.word_embedding(d.pop('input_ids')).unsqueeze(1),  # (bs, 1, tgt_seq_len, hs)
+                d.pop('additive_embeds')  # (bs, 3, tgt_seq_len, hs)
+            ], dim=1) * tgt_ef_tw.view(1, -1, tgt_seq_len, 1)
+            # (bs, tgt_seq_len, hs)
+            d['inputs_embeds'] = tgt_input_embeds.sum(1) / tgt_ef_tw.view(1, -1, 1)
 
         lm_logits = self.plm.decode(**d)[0]
-
         # (bs, tgt_len)
         lm_loss = F.cross_entropy(
             input=lm_logits.view(-1, lm_logits.size(-1)),
@@ -181,8 +216,10 @@ class EFCP(BaseModel):
             ignore_index=-1,
             reduction='none'
         ).view(tgt_label_ids.shape)
+
         # (bs, )
         label_size = torch.sum(tgt_label_ids.ne(-1), dim=1).type_as(lm_loss)
+
         lm_loss_value = torch.sum(lm_loss) / torch.sum(label_size)
         ppl_value = torch.exp(torch.mean(torch.sum(lm_loss, dim=1).float() / label_size.float()))
 

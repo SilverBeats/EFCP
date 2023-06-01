@@ -10,7 +10,7 @@ SPECIAL_TOKEN = {
     'cls_token': '<cls>',
     'unk_token': '<unk>',
     'sep_token': '<sep>',
-    'additional_special_tokens': ['<usr>', '<sys>', '<persona>']
+    'additional_special_tokens': ['<usr>', '<sys>', '<persona>', '<cs>']
     # <usr> speaker
     # <sys> responder
 }

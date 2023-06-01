@@ -8,3 +8,4 @@ encoder_config:
   total_key_depth: 40
   filter_size: 50
   max_length: 1000
+use_cs: true

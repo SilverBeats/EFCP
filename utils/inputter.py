@@ -33,20 +33,23 @@ class PECDataset(Dataset):
 def collate_fn(
         batch: List[Dict[str, Any]],
         tokenizer: PreTrainedTokenizer,
-        do_gen: bool = False,
-        use_cs: bool = True
-) -> Union[Dict[str, Tensor], Tuple[Dict[str, Tensor], List[str], List[str]]]:
+        model_name: str,
+        use_cs: bool = True,
+        do_gen: bool = False
+):
     bs = len(batch)
     pad_token_id = tokenizer.pad_token_id
-    usr_token_id = tokenizer.usr_token_id
+    cs_token_id = tokenizer.cs_token_id
 
     forward_dict = {}
-    forward_keys = ['ctx_da', 'ctx_em',
-                    'ctx_len', 'tgt_input_ids', 'tgt_label_ids', 'tgt_token_type_ids',
+    forward_keys = ['ctx_input_ids', 'ctx_token_type_ids', 'ctx_da', 'ctx_em',
+                    'tgt_input_ids', 'tgt_label_ids', 'tgt_token_type_ids',
                     'tgt_er', 'tgt_ex', 'tgt_ip', 'tgt_da', 'tgt_em', 'tgt_len',
                     'persona_input_ids', 'persona_token_type_ids', 'persona_len']
-    if not use_cs:
-        forward_keys.extend(['ctx_input_ids', 'ctx_len', 'ctx_token_type_ids'])
+
+    if use_cs and model_name == 'cem':
+        forward_keys.extend([f'ctx_{rel}' for rel in RELS if rel != 'xAttr'])
+
     for key in forward_keys:
         if key in ['ctx_da', 'ctx_em', 'tgt_er', 'tgt_ex', 'tgt_ip', 'tgt_da', 'tgt_em']:
             batch_inputs = torch.LongTensor([b[key] for b in batch]).view(bs, -1)  # (bs, 1)
@@ -59,20 +62,93 @@ def collate_fn(
             padding_value = pad_token_id if key != 'tgt_label_ids' else -1
             batch_inputs = torch.LongTensor([b[key] + [padding_value] * (max_len - len(b[key])) for b in batch])
         forward_dict[key] = batch_inputs
+
     if use_cs:
-        ctx_input_ids = []
-        ctx_len = []
+        if model_name == 'efcp':
+            ctx_cs_input_ids, ctx_cs_len = [], []
+            for b in batch:
+                cur_cs = sum([b[f'ctx_{rel}'] for rel in RELS if rel != 'xAttr'], [])
+                ctx_cs_input_ids.append(cur_cs)
+                ctx_cs_len.append(len(cur_cs))
+            max_cs_len = max(ctx_cs_len)
+            forward_dict['ctx_cs_input_ids'] = torch.LongTensor([
+                cs + [pad_token_id] * (max_cs_len - l)
+                for cs, l in zip(ctx_cs_input_ids, ctx_cs_len)
+            ])
+            forward_dict['ctx_cs_token_type_ids'] = torch.LongTensor([
+                [cs_token_id] * l + [pad_token_id] * (max_cs_len - l)
+                for l in ctx_cs_len
+            ])
+            forward_dict['ctx_cs_len'] = torch.LongTensor(ctx_cs_len)
+        elif model_name == 'cem':
+            forward_dict['ctx_cs_dict'] = {
+                f'ctx_{rel}': forward_dict.pop(f'ctx_{rel}')
+                for rel in RELS if rel != 'xAttr'
+            }
+        else:
+            raise NotImplementedError
+
+    if do_gen:
+        handler_keys = ['tgt_input_ids', 'tgt_label_ids', 'tgt_token_type_ids']
+        for key in handler_keys:
+            forward_dict[key] = forward_dict[key][:, 0].unsqueeze(1)
+        forward_dict['tgt_len'] = torch.ones((bs,), dtype=torch.long)
+
+        posts = tokenizer.batch_decode([b['ctx_input_ids'] for b in batch], skip_special_tokens=True)
+        references = tokenizer.batch_decode([b['tgt_label_ids'] for b in batch], skip_special_tokens=True)
+        return forward_dict, posts, references
+    else:
+        return forward_dict
+
+
+def collate_fn1(
+        batch: List[Dict[str, Any]],
+        tokenizer: PreTrainedTokenizer,
+        model_name: str,
+        use_cs: bool = True,
+        do_gen: bool = False
+) -> Union[Dict[str, Tensor], Tuple[Dict[str, Tensor], List[str], List[str]]]:
+    bs = len(batch)
+    pad_token_id = tokenizer.pad_token_id
+    usr_token_id = tokenizer.usr_token_id
+
+    forward_dict = {}
+    forward_keys = ['ctx_da', 'ctx_em',
+                    'ctx_len', 'tgt_input_ids', 'tgt_label_ids', 'tgt_token_type_ids',
+                    'tgt_er', 'tgt_ex', 'tgt_ip', 'tgt_da', 'tgt_em', 'tgt_len',
+                    'persona_input_ids', 'persona_token_type_ids', 'persona_len']
+    if not use_cs:
+        forward_keys.extend(['ctx_input_ids', 'ctx_len', 'ctx_token_type_ids'])
+
+    if use_cs and model_name == 'cem':
+        forward_keys.extend([f'ctx_{rel}' for rel in RELS if rel != 'xAttr'])
+
+    for key in forward_keys:
+        if key in ['ctx_da', 'ctx_em', 'tgt_er', 'tgt_ex', 'tgt_ip', 'tgt_da', 'tgt_em']:
+            batch_inputs = torch.LongTensor([b[key] for b in batch]).view(bs, -1)  # (bs, 1)
+        elif key.endswith('len'):
+            batch_inputs = torch.LongTensor([b[key] for b in batch])  # (bs, )
+        else:
+            # get the max len
+            max_len = max(len(b[key]) for b in batch)
+            # set padding value
+            padding_value = pad_token_id if key != 'tgt_label_ids' else -1
+            batch_inputs = torch.LongTensor([b[key] + [padding_value] * (max_len - len(b[key])) for b in batch])
+        forward_dict[key] = batch_inputs
+
+    if use_cs and model_name == 'cem':
+        forward_dict['ctx_cs_dict'] = {
+            f'ctx_{rel}': forward_dict.pop(f'ctx_{rel}')
+            for rel in RELS if rel != 'xAttr'
+        }
+
+    if use_cs:
+        ctx_input_ids, ctx_len = [], []
         for b in batch:
-            cc = []
-            for rel in RELS:
-                if rel == 'xAttr':
-                    continue
-                if f'ctx_{rel}' in b:
-                    cc.append(b[f'ctx_{rel}'])
-            cc.append(b['ctx_input_ids'])
+            cc = [b[f'ctx_{rel}'] for rel in RELS if rel != 'xAttr'] + [b['ctx_input_ids']]
+            cc = sum(cc, [])
             ctx_input_ids.append(cc)
             ctx_len.append(len(cc))
-        # padding
         max_ctx_len = max(ctx_len)
         # (bs, max_ctx_len)
         ctx_input_ids = torch.LongTensor([
