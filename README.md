@@ -55,7 +55,7 @@ data
 
 **Notice**
 
-Running `prepare.py` will take a lot of time, so it is not recommended to run it. For convenience, we provide the processed dataset. [[Google Drive](https://drive.google.com/file/d/1-7GAhz1GVXFk4jk79fXJRJ417cNyslnk/view?usp=sharing)] [[BaiduNetDisk](链接：https://pan.baidu.com/s/1wtKQ8zMTnkHadW6mq5x36Q?pwd=jhsc)]
+Running `prepare.py` will take a lot of time, so it is not recommended to run it. For convenience, we provide the processed dataset. [[Google Drive](https://drive.google.com/file/d/1-7GAhz1GVXFk4jk79fXJRJ417cNyslnk/view?usp=sharing)] [[BaiduNetDisk](https://pan.baidu.com/s/1wtKQ8zMTnkHadW6mq5x36Q?pwd=jhsc)]
 
 ### 1.3 Train
 
