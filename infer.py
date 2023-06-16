@@ -23,6 +23,7 @@ from utils.inputter import PECDataset, collate_fn
 
 def prepare_dataloader(
         args: Dict[str, Any],
+        model_name: str,
         tokenizer: PreTrainedTokenizer,
         split: str,
         do_gen: bool,
@@ -33,7 +34,13 @@ def prepare_dataloader(
     dataloader = DataLoader(
         dataset=dataset,
         batch_size=batch_size,
-        collate_fn=partial(collate_fn, tokenizer=tokenizer, do_gen=do_gen, use_cs=use_cs)
+        collate_fn=partial(
+            __func=collate_fn,
+            tokenizer=tokenizer,
+            model_name=model_name,
+            use_cs=use_cs,
+            do_gen=do_gen,
+        )
     )
     return dataloader
 
@@ -71,8 +78,8 @@ def main(cfg: DictConfig):
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"load test data ...")
-    valid_loader = prepare_dataloader(infer_config, tokenizer, 'test', False, model_config['use_cs'])
-    infer_loader = prepare_dataloader(infer_config, tokenizer, 'test', True, model_config['use_cs'])
+    valid_loader = prepare_dataloader(infer_config, model_name, tokenizer, 'test', False, model_config['use_cs'])
+    infer_loader = prepare_dataloader(infer_config, model_name, tokenizer, 'test', True, model_config['use_cs'])
 
     metric_res = {}
 
