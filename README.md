@@ -55,14 +55,13 @@ data
 
 **Notice**
 
-Running `prepare.py` will take a lot of time, so it is not recommended to run it. For convenience, we provide the processed dataset. [[Google Drive](https://drive.google.com/file/d/1c619SHlMeVfqyC8WFY_CSgiPPsQdzA1i/view?usp=sharing)] [[BaiduNetDisk](https://pan.baidu.com/s/10TDFTGB6XVUpzo43pBZ9gQ?pwd=nvfx )]
+Running `prepare.py` will take a lot of time, so it is not recommended to run it. For convenience, we provide the processed dataset. [[Google Drive](https://drive.google.com/file/d/1-7GAhz1GVXFk4jk79fXJRJ417cNyslnk/view?usp=sharing)] [[BaiduNetDisk](链接：https://pan.baidu.com/s/1wtKQ8zMTnkHadW6mq5x36Q?pwd=jhsc)]
 
 ### 1.3 Train
 
-Put the dataset processed by `prepare.py` into *output* directory and run `python train.py`
+Put the dataset processed by `prepare.py` into *output* directory, prepare *distilgpt2* and run `python train.py`
 
 All configuration files are in the `config` directory.
-
 
 ### 1.4 Generation
 
