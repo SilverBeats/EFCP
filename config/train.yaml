@@ -20,7 +20,7 @@ train:
   optim_steps:
   eval_interval: 1300
   train_batch_size: 32
-  eval_batch_size: 32
+  eval_batch_size: 48
   lr: 1e-4
   max_grad_norm: 1.0
   warm_up: 1300

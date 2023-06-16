@@ -51,7 +51,12 @@ def main(cfg: DictConfig):
         model=model,
         config=train_args,
         train_dataset=train_data_set,
-        collate_fn=partial(collate_fn, tokenizer=tokenizer, use_cs=model_config['use_cs']),
+        collate_fn=partial(
+            __func=collate_fn,
+            tokenizer=tokenizer,
+            use_cs=model_config['use_cs'],
+            model_name=model_name
+        ),
         eval_dataset=valid_data_set,
         eval_fn=eval_model_loss,
     ).train()

@@ -65,7 +65,13 @@ All configuration files are in the `config` directory.
 
 ### 1.4 Generation
 
+if you need `bert score`, download the *roberta-large* model from huggingface
+
+if you need `bart score`, download the pretrained model from [[Link](https://drive.google.com/file/d/1_7JfF7KOInb7ZrxKHIigTMR4ChVET01m/view?usp=sharing)], [[Repo](https://github.com/neulab/BARTScore)]
+
 Edit `infer.yaml`, set `ckpt`, and run `python infer.py`
+
+
 
 
 

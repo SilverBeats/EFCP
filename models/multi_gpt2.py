@@ -5,7 +5,7 @@ from transformers import GPT2Tokenizer
 
 from utils.generate import generate
 from .base import BaseModel
-from .gpt2 import GPT2EncoderDecoderModel
+from plm import GPT2EncoderDecoderModel
 
 
 class MultiGPT2(BaseModel):

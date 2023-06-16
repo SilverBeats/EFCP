@@ -34,14 +34,6 @@ class EFCP(BaseModel):
                 self.persona_summary_head = SequenceSummary(self.config)
                 self.cp_linear = nn.Sequential(nn.Linear(2 * self.hs, self.hs), nn.ELU())
 
-    def fuse_ctx_cs(
-            self,
-            ctx_h_s: Tensor,
-            cs_h_s_dict: Dict[str, Tensor],
-            cs_true_len: Dict[str, Tensor] = None
-    ) -> Tensor:
-        return self.acs(ctx_h_s, cs_h_s_dict, cs_true_len)
-
     def fuse_ctx_persona(
             self,
             ctx_h_s: Tensor,
@@ -66,7 +58,6 @@ class EFCP(BaseModel):
             ctx_len: Tensor,  # (bs, )
             ctx_da: Tensor,
             ctx_em: Tensor,
-            ctx_cs_dict: Dict[str, Tensor],
             persona_input_ids: Tensor,
             persona_len: Tensor,  # (bs, )
             persona_token_type_ids: Tensor,
@@ -141,7 +132,6 @@ class EFCP(BaseModel):
             ctx_len: Tensor,  # (bs, )
             ctx_da: Tensor,
             ctx_em: Tensor,
-            ctx_cs_dict: Dict[str, Tensor],
             persona_input_ids: Tensor,
             persona_len: Tensor,  # (bs, )
             persona_token_type_ids: Tensor,
@@ -162,7 +152,6 @@ class EFCP(BaseModel):
             ctx_len=ctx_len,
             ctx_da=ctx_da,
             ctx_em=ctx_em,
-            ctx_cs_dict=ctx_cs_dict,
             persona_input_ids=persona_input_ids,
             persona_len=persona_len,
             persona_token_type_ids=persona_token_type_ids,
