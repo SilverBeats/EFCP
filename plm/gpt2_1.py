@@ -219,6 +219,7 @@ class MyGPT2LMHeadModel(GPT2LMHeadModel):
 
     def __init__(self, config):
         super().__init__(config)
+        self.config = config
         self.transformer = MyGPT2Model(config)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 

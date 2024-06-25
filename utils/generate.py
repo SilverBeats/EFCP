@@ -28,11 +28,6 @@ def generate(
         usr_token_id=None,
         sys_token_id=None,
         persona_token_id=None,
-        er_token_id=None,
-        ex_token_id=None,
-        in_token_id=None,
-        da_token_id=None,
-        em_token_id=None,
         eos_token_id=None,
         length_penalty=None,
         no_repeat_ngram_size=None,
@@ -51,11 +46,6 @@ def generate(
     usr_token_id = usr_token_id if usr_token_id is not None else self.config.usr_token_id
     sys_token_id = sys_token_id if sys_token_id is not None else self.config.sys_token_id
     persona_token_id = persona_token_id if persona_token_id is not None else self.config.persona_token_id
-    er_token_id = er_token_id if er_token_id is not None else self.config.er_token_id
-    ex_token_id = ex_token_id if ex_token_id is not None else self.config.ex_token_id
-    in_token_id = in_token_id if in_token_id is not None else self.config.in_token_id
-    da_token_id = da_token_id if da_token_id is not None else self.config.da_token_id
-    em_token_id = em_token_id if em_token_id is not None else self.config.em_token_id
 
     batch_size = input_ids.size(0)
     device = input_ids.device
@@ -138,11 +128,6 @@ def generate(
             usr_token_id=usr_token_id,
             sys_token_id=sys_token_id,
             persona_token_id=persona_token_id,
-            er_token_id=er_token_id,
-            ex_token_id=ex_token_id,
-            in_token_id=in_token_id,
-            da_token_id=da_token_id,
-            em_token_id=em_token_id,
             batch_size=effective_batch_size,
             model_kwargs=model_kwargs,
         )
@@ -175,11 +160,6 @@ def _generate_no_beam_search(
         usr_token_id,
         sys_token_id,
         persona_token_id,
-        er_token_id,
-        ex_token_id,
-        in_token_id,
-        da_token_id,
-        em_token_id,
         batch_size,
         model_kwargs,
 ):
@@ -242,11 +222,6 @@ def _generate_no_beam_search(
             usr_token_id=usr_token_id,
             sys_token_id=sys_token_id,
             persona_token_id=persona_token_id,
-            er_token_id=er_token_id,
-            ex_token_id=ex_token_id,
-            in_token_id=in_token_id,
-            da_token_id=da_token_id,
-            em_token_id=em_token_id,
         )
 
         # if model has past, then set the past variable to speed up decoding
@@ -321,11 +296,6 @@ def postprocess_next_token_scores(
         usr_token_id=None,
         sys_token_id=None,
         persona_token_id=None,
-        er_token_id=None,
-        ex_token_id=None,
-        in_token_id=None,
-        da_token_id=None,
-        em_token_id=None,
 ):
     # repetition penalty (from CTRL paper https://arxiv.org/abs/1909.05858)
     if repetition_penalty != 1.0:
@@ -342,16 +312,6 @@ def postprocess_next_token_scores(
         scores[:, eos_token_id] = -1e20
     if pad_token_id is not None and cur_len < min_length:
         scores[:, pad_token_id] = -1e20
-    if er_token_id is not None and cur_len > min_length:
-        scores[:, er_token_id] = -1e20
-    if ex_token_id is not None and cur_len > min_length:
-        scores[:, ex_token_id] = -1e20
-    if in_token_id is not None and cur_len > min_length:
-        scores[:, in_token_id] = -1e20
-    if da_token_id is not None and cur_len > min_length:
-        scores[:, da_token_id] = -1e20
-    if em_token_id is not None and cur_len > min_length:
-        scores[:, em_token_id] = -1e20
     if sep_token_id is not None and sep_token_id != eos_token_id:
         scores[:, sep_token_id] = -1e20
     if unk_token_id is not None and unk_token_id != eos_token_id:

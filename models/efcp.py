@@ -1,4 +1,4 @@
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 import torch
 import torch.nn as nn
@@ -7,7 +7,7 @@ from torch import Tensor
 from transformers import GPT2Tokenizer
 from transformers.modeling_utils import SequenceSummary
 
-from plm import GPT2EncoderDecoderModel
+from plm import EncoderDecoder
 from utils.generate import generate
 from .base import BaseModel
 from .modules import PredictEmpathyFactorsModule
@@ -16,7 +16,7 @@ from .modules import PredictEmpathyFactorsModule
 class EFCP(BaseModel):
     def __init__(
             self,
-            plm: GPT2EncoderDecoderModel,
+            plm: EncoderDecoder,
             tokenizer: GPT2Tokenizer,
             model_config: Dict[str, Any]
     ):
@@ -193,3 +193,17 @@ class EFCP(BaseModel):
     def generate(self, forward_dict: Dict[str, Any], **kwargs):
         d, result_info = self.forward_step(**forward_dict)
         return result_info, generate(self, **d, **kwargs)
+
+    # def state_dict(self, *args, **kwargs):
+    #     model_state_dict = {
+    #         'plm': self.plm.state_dict()
+    #     }
+    #     if hasattr(self, 'pef_module'):
+    #         model_state_dict['pef_module'] = self.pef_module.state_dict()
+    #     if hasattr(self, 'ctx_summary_head'):
+    #         model_state_dict['ctx_summary_head'] = self.ctx_summary_head.state_dict()
+    #     if hasattr(self, 'persona_summary_head'):
+    #         model_state_dict['persona_summary_head'] = self.persona_summary_head.state_dict()
+    #     if hasattr(self, 'cp_linear'):
+    #         model_state_dict['cp_linear'] = self.cp_linear.state_dict()
+    #     return model_state_dict

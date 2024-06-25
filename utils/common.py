@@ -1,6 +1,6 @@
 import os
 import re
-from typing import Any, Dict, List
+from typing import Dict, Any, List
 
 import emoji
 import numpy as np
@@ -63,8 +63,11 @@ def to_complete_sentence(sentence: str, effect_type):
     return sentence + ' .'
 
 
-def calc_model_params(model):
-    model_parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
+def calc_model_params(model, trainable=True):
+    if trainable:
+        model_parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
+    else:
+        model_parameters = model.parameters()
     total_params = sum([np.prod(p.size()) for p in model_parameters])
     return total_params
 
@@ -107,6 +110,7 @@ def check_model_config(model_name: str, ablation_mode: List[str], model_config: 
 
     if any(item not in ['pwp', 'per', 'cs', 'ef', 'pred_loss'] for item in ablation_mode):
         raise ValueError
+
     origin_model_config = {
         'use_persona': True,
         'use_cs': True,
@@ -144,3 +148,19 @@ def check_model_config(model_name: str, ablation_mode: List[str], model_config: 
         model_config['source_types'] = 2
     else:
         model_config['source_types'] = 1
+
+
+def rm_file(path: str):
+    if os.path.exists(path) and os.path.isfile(path):
+        os.remove(path)
+
+
+def rm_dir(path: str):
+    if os.path.exists(path) and os.path.isdir(path):
+        for f_name in os.listdir(path):
+            sub_path = build_path(path, f_name)
+            if os.path.isdir(sub_path):
+                rm_dir(sub_path)
+            else:
+                rm_file(sub_path)
+        os.rmdir(path)

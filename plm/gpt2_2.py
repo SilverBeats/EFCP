@@ -7,6 +7,8 @@ from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttenti
 from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel, GPT2MLP
 from transformers.pytorch_utils import find_pruneable_heads_and_indices, prune_conv1d_layer
 
+from .base import EncoderDecoder
+
 
 class Attention(nn.Module):
     def __init__(self, config, fuse_attention=False):
@@ -120,8 +122,7 @@ class Attention(nn.Module):
         else:
             proj_weight, proj_bias = self.c_attn.weight, self.c_attn.bias
             size_out = x.size()[:-1] + (self.split_size,)
-            query = torch.addmm(proj_bias[: self.split_size], x.view(-1, x.size(-1)),
-                                proj_weight[:, :self.split_size])
+            query = torch.addmm(proj_bias[: self.split_size], x.view(-1, x.size(-1)), proj_weight[:, :self.split_size])
             query = self._split_heads(query.view(*size_out))
             if layer_past is None:
                 size_out = k.size()[:-1] + (self.split_size * 2,)
@@ -134,7 +135,8 @@ class Attention(nn.Module):
             else:
                 key, value = layer_past
 
-        # (bs, n_head, query_len, head_dim); (bs, n_head, query_len, key_len)
+        # (bs, n_head, query_len, head_dim);
+        # (bs, n_head, query_len, key_len)
         attn_output, attn_weights = self._attn(query, key, value, attention_mask, head_mask, bias_mask=(k is None))
 
         attn_output = self._merge_heads(attn_output)  # (bs, query_len, hs)
@@ -232,12 +234,13 @@ class Block(nn.Module):
             for i, enc in enumerate(encoded_context):
                 cur_layer_past = None if layer_past is None else layer_past[1][i]
 
-                enc_attn_outputs = self.context_attns[i](hidden_states,
-                                                         k=encoded_context[i],
-                                                         layer_past=cur_layer_past,
-                                                         use_cache=use_cache,
-                                                         output_attentions=output_attentions,
-                                                         )
+                enc_attn_outputs = self.context_attns[i](
+                    hidden_states,
+                    k=encoded_context[i],
+                    layer_past=cur_layer_past,
+                    use_cache=use_cache,
+                    output_attentions=output_attentions,
+                )
                 context_attn_outputs += (enc_attn_outputs[0],)
                 if use_cache:
                     present_context_k_v += (enc_attn_outputs[2],)
@@ -405,114 +408,16 @@ class MyGPT2Model(GPT2PreTrainedModel):
         )
 
 
-class GPT2EncoderDecoderModel(GPT2LMHeadModel):
+class GPT2EncoderDecoderModel(GPT2LMHeadModel, EncoderDecoder):
 
     def __init__(self, config):
         super(GPT2EncoderDecoderModel, self).__init__(config)
+        self._type = 'gpt2'
+        self.encoder_decoder_is_same = False
+        self.decoder_name = 'transformer'
+
+        self.config = config
         self.transformer = MyGPT2Model(config)
-        self.encoder = None
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.encoder = None
         self.post_init()
-
-    def forward(self,
-                input_ids: Optional[torch.LongTensor] = None,
-                past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
-                attention_mask: Optional[torch.FloatTensor] = None,
-                token_type_ids: Optional[torch.LongTensor] = None,
-                position_ids: Optional[torch.LongTensor] = None,
-                head_mask: Optional[torch.FloatTensor] = None,
-                inputs_embeds: Optional[torch.FloatTensor] = None,
-                encoder_hidden_states: Optional[torch.Tensor] = None,
-                encoder_attention_mask: Optional[torch.FloatTensor] = None,
-                labels: Optional[torch.LongTensor] = None,
-                use_cache: Optional[bool] = None,
-                output_attentions: Optional[bool] = None,
-                output_hidden_states: Optional[bool] = None,
-                return_dict: Optional[bool] = None, ):
-        raise NotImplementedError
-
-    def encode(
-            self,
-            input_ids=None,
-            inputs_embeds=None,
-            labels=None,
-            additive_embeds=None,
-            attention_mask=None,
-            token_type_ids=None,
-            position_ids=None,
-            past_key_values=None,
-            use_cache=None,
-            output_attentions=None,
-            output_hidden_states=None,
-            **kwargs
-    ):
-        # input_ids.shape = (bs, len)
-        outputs = self.encoder(input_ids=input_ids,
-                               inputs_embeds=inputs_embeds,
-                               additive_embeds=additive_embeds,
-                               attention_mask=attention_mask,
-                               token_type_ids=token_type_ids,
-                               position_ids=position_ids,
-                               past_key_values=past_key_values,
-                               use_cache=use_cache,
-                               output_attentions=output_attentions,
-                               output_hidden_states=output_hidden_states
-                               )
-        encode_output = (outputs.last_hidden_state,)
-
-        if labels is not None:
-            # (bs, len, vocab_size)
-            lm_logits = self.lm_head(outputs.last_hidden_state)
-            # (bs, len - 1, vocab_size)
-            shift_logits = lm_logits[..., :-1, :].contiguous()
-            # (bs, len - 1, vocab_size)
-            shift_labels = labels[..., 1:].contiguous()
-            # Flatten the tokens
-            loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-            encode_output += (loss,)
-
-        if use_cache:
-            encode_output += (outputs.past_key_values,)
-        if output_attentions:
-            encode_output += (outputs.attentions,)
-        return encode_output
-
-    def decode(
-            self,
-            input_ids=None,
-            inputs_embeds=None,
-            additive_embeds=None,
-            attention_mask=None,
-            token_type_ids=None,
-            position_ids=None,
-            past_key_values=None,
-            use_cache=None,
-            output_attentions=None,
-            output_hidden_states=None,
-            enc_contexts=None,
-            **kwargs
-    ):
-        if enc_contexts is None:
-            enc_contexts = []
-        outputs = self.transformer(input_ids=input_ids,
-                                   inputs_embeds=inputs_embeds,
-                                   additive_embeds=additive_embeds,
-                                   attention_mask=attention_mask,
-                                   token_type_ids=token_type_ids,
-                                   position_ids=position_ids,
-                                   past_key_values=past_key_values,
-                                   use_cache=use_cache,
-                                   output_attentions=output_attentions,
-                                   output_hidden_states=output_hidden_states,
-                                   enc_contexts=enc_contexts,
-                                   )
-        last_hidden_state = outputs.last_hidden_state
-        lm_logits = self.lm_head(last_hidden_state)
-
-        decode_output = (lm_logits,)
-        if use_cache:
-            decode_output += (outputs.past_key_values,)
-        if output_attentions:
-            decode_output += (outputs.attentions,)
-        return decode_output

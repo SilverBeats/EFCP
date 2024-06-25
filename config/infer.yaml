@@ -10,24 +10,26 @@ model:
 
 infer:
   corpus_dir: output
-  gpt2_path: ./pretrained_models/distilgpt2
+  pretrained_model_path: ./pretrained_models/distilgpt2
   device: cuda
   ckpt:
   ablation_mode:   # pwp/per/cs/pred_loss/ef/null
   infer_batch_size: 32
-  add_nlgeval: false
-  add_bert_score: true
-  add_bart_score: true
-  bert_score_config:
-      model_type: ./pretrained_models/roberta-large
-      num_layers: 17
+  metric_config:
+    use_nlgeval: true
+    use_bert_score: true
+    use_bart_score: false
+    bert_score_config:
+        model_type: F:/预训练模型/roberta/large
+        num_layers: 17
+        batch_size: 32
+        lang: en
+        device: cuda
+    bart_score_config:
+      checkpoint: ./pretrained_models/bart-score
+      path:
       batch_size: 32
-      lang: en
-  bart_score_config:
-    checkpoint: ./pretrained_models/bart-score
-    path:
-    batch_size: 32
-    device: cuda
+      device: cuda
 
 generate_config:
   min_length: 5

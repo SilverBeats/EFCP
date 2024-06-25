@@ -7,6 +7,7 @@ from typing import List, Optional, Union
 
 import torch
 import torch.nn as nn
+from accelerate import Accelerator
 from torch import Tensor
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset
@@ -138,6 +139,7 @@ class Trainer:
             eval_dataset: Dataset = None,
             eval_fn: Callable = None
     ):
+        self.config = config
         # check for training
         assert config.epochs is not None or config.optim_steps is not None
         assert config.ckpt is not None or config.output_dir is not None
@@ -150,7 +152,6 @@ class Trainer:
         if config.do_eval:
             assert eval_dataset is not None, 'You should give eval_dataset because do_eval is equal to True.'
             assert eval_fn is not None, 'You should give a custom eval_fn because do_eval is equal to True.'
-            assert config.eval_interval > 0
             assert config.eval_key_label is not None, 'You should give eval_key_label because do_eval is equal to True.'
         if config.skip_param_save is None:
             config.skip_param_save = []
@@ -176,6 +177,9 @@ class Trainer:
         warm_up_steps = config.warm_up if config.warm_up >= 1 else config.warm_up * config.optim_steps
         self.optimizer = AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=config.lr)
         self.schedule = get_linear_schedule_with_warmup(self.optimizer, warm_up_steps, config.optim_steps)
+
+        if config.do_eval and config.eval_interval < 0:
+            config.eval_interval = warm_up_steps
 
         # prepare some variable
         current_time = datetime.now().strftime('%Y%m%d%H%M%S')

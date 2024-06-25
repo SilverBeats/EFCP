@@ -13,12 +13,7 @@ class PECDataset(Dataset):
     def __init__(self, corpus_dir: str, split: str, domain: str = None):
         super(PECDataset, self).__init__()
         assert split in {'train', 'validation', 'test'}
-        if split == 'test':
-            assert domain is not None
-            corpus_path = f'{corpus_dir}/{split}_{domain}.pkl'
-        else:
-            corpus_path = f'{corpus_dir}/{split}.pkl'
-
+        corpus_path = f'{corpus_dir}/{split}.pkl'
         with open(corpus_path, 'rb') as f:
             self.data = pickle.load(f)
         self.data_size = len(self.data)

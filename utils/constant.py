@@ -37,3 +37,12 @@ ACC_LIST = [
     'da_top1', 'da_top3',
     'em_top1', 'em_top3'
 ]
+DAS = [
+    "acknowledging", "agreeing", "consoling", "encouraging",
+    "questioning", "sympathizing", "wishing", "others"
+]
+EMS = [
+    "admiration", "anger", "approval",
+    "caring", "fear", "joy",
+    "sadness", "surprise", "neutral"
+]

@@ -1,7 +1,6 @@
 defaults:
   - _self_
 
-
 share_embedding: false
 source_types: 2
 attention_fusion_type: sw  # or linear
@@ -11,3 +10,4 @@ use_ef: true  # ef: empathy factors
 predict_with_persona: true
 pred_comae_coef: 1.0
 decode_lm_coef: 1.0
+encoder_decoder_is_same: false

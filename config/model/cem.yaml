@@ -1,6 +1,7 @@
 defaults:
   - _self_
 
+
 encoder_config:
   num_layers: 1
   num_heads: 2

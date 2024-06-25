@@ -1,8 +1,6 @@
 import traceback
 import warnings
-from typing import Dict
-from typing import List
-from typing import Union
+from typing import Dict, List, Union
 
 import numpy as np
 import torch
@@ -37,41 +35,33 @@ class MyMetric:
     def __init__(
             self,
             use_nlgeval: bool = False,
-            use_bertscore: bool = False,
-            use_bartscore: bool = False,
+            use_bert_score: bool = False,
+            use_bart_score: bool = False,
             **kwargs
     ):
-        self.refs: List[str] = []
-        self.hyps: List[str] = []
+        self.refs: List[List[str]] = []
+        self.hyps: List[List[str]] = []
 
         self.use_nlgeval = use_nlgeval
-        self.use_bertscore = use_bertscore
-        self.use_bartscore = use_bartscore
+        self.use_bert_score = use_bert_score
+        self.use_bart_score = use_bart_score
         if use_nlgeval:
             from nlgeval import NLGEval
-            self.nlgeval = NLGEval(no_skipthoughts=True)
+            print('create nlgeval obj')
+            self.nlgeval = NLGEval(no_skipthoughts=True, metrics_to_omit=['SPICE'])
 
-        if use_bartscore:
-            self.bart_score_config = {
-                'checkpoint': kwargs.get('checkpoint'),
-                'path': kwargs.get('path', None),
-                'batch_size': kwargs.get('batch_size', 32),
-                'device': 'cuda:0' if torch.cuda.is_available() else 'cpu'
-            }
+        if use_bart_score:
+            print('load bart score obj')
+            self.bart_score_config = kwargs.get('bert_score_config', {})
             self.bart_scorer = BARTScorer(**self.bart_score_config)
 
-        if use_bertscore:
-            self.bert_score_config = {
-                'model_type': kwargs.get('model_type'),
-                'num_layers': kwargs.get('num_layers'),
-                'batch_size': kwargs.get('batch_size', 32),
-                'lang': kwargs.get('lang', 'en'),
-                'device': 'cuda:0' if torch.cuda.is_available() else 'cpu'
-            }
+        if use_bert_score:
+            self.bert_score_config = kwargs.get('bert_score_config', {})
 
     def forword(self, ref: str, hyp: str):
-        self.refs.append(word_tokenize(ref.lower()))
-        self.hyps.append(word_tokenize(hyp.lower()))
+        if len(word_tokenize(ref.lower())) != 0 and len(word_tokenize(hyp.lower())) != 0:
+            self.refs.append(word_tokenize(ref.lower()))
+            self.hyps.append(word_tokenize(hyp.lower()))
 
     def calc_distinct_k(self, k) -> float:
         assert k >= 1
@@ -94,12 +84,12 @@ class MyMetric:
             'length': float(np.mean(list(map(len, self.hyps)))),
             **{f"dist-{k}": 100 * self.calc_distinct_k(k) for k in range(1, 5)},
         }
-        if self.use_bertscore:
+        if self.use_bert_score:
             from bert_score import score
             print('use bert score')
             P, R, F = score(
-                cands=self.hyps,
-                refs=self.refs,
+                cands=[' '.join(item) for item in self.hyps],
+                refs=[' '.join(item) for item in self.refs],
                 **self.bert_score_config
             )
             metric_res.update({
@@ -110,12 +100,12 @@ class MyMetric:
         if self.use_nlgeval:
             print('use nlgeval')
             r = self.nlgeval.compute_metrics(
-                ref_list=self.refs,
-                hyp_list=self.hyps
+                ref_list=[[' '.join(item) for item in self.refs]],
+                hyp_list=[' '.join(item) for item in self.hyps]
             )
             metric_res.update(r)
 
-        if self.use_bartscore:
+        if self.use_bart_score:
             print('use bart score')
             r = self.bart_scorer.score(self.refs, self.hyps)
             metric_res.update(r)
@@ -124,7 +114,7 @@ class MyMetric:
 
 
 class BARTScorer:
-    r"""Code from https://github.com/neulab/BARTScore"""
+    """Code from https://github.com/neulab/BARTScore"""
 
     def __init__(
             self,
@@ -157,7 +147,7 @@ class BARTScorer:
     def score(self, srcs, tgts) -> float:
         """ Score a batch of examples """
         score_list = []
-        for i in tqdm( range(0, len(srcs), self.batch_size), desc='bart_score ...'):
+        for i in tqdm(range(0, len(srcs), self.batch_size), desc='bart_score ...'):
             src_list = srcs[i: i + self.batch_size]
             tgt_list = tgts[i: i + self.batch_size]
             try:

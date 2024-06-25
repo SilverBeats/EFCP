@@ -6,7 +6,6 @@ from typing import Any, Dict
 from typing import List
 
 import hydra
-import nltk
 import torch
 from omegaconf import DictConfig, OmegaConf
 from sklearn.metrics import confusion_matrix
@@ -14,9 +13,9 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import PreTrainedTokenizer
 
-from utils.build import build_model, build_tokenizer_and_gpt2
+from utils.build import build_model, build_tokenizer_and_plm
 from utils.common import check_model_config, data_2_device
-from utils.constant import ACC_LIST, DOMAINS
+from utils.constant import ACC_LIST
 from utils.eval import MyMetric, eval_model_loss
 from utils.inputter import PECDataset, collate_fn
 
@@ -29,13 +28,13 @@ def prepare_dataloader(
         do_gen: bool,
         use_cs: bool
 ):
-    dataset = PECDataset(args['corpus_dir'], split, None)
+    dataset = PECDataset(args['corpus_dir'], split)
     batch_size = args['infer_batch_size']
     dataloader = DataLoader(
         dataset=dataset,
         batch_size=batch_size,
         collate_fn=partial(
-            __func=collate_fn,
+            collate_fn,
             tokenizer=tokenizer,
             model_name=model_name,
             use_cs=use_cs,
@@ -65,7 +64,12 @@ def main(cfg: DictConfig):
 
     device = infer_config['device']
     print(f'create {model_name} model and load ckpt ...')
-    tokenizer, plm = build_tokenizer_and_gpt2(infer_config['gpt2_path'], model_name, model_config)
+    tokenizer, plm = build_tokenizer_and_plm(
+        name_or_path=infer_config['pretrained_model_path'],
+        only_tokenizer=False,
+        model_name=model_name,
+        model_config=model_config
+    )
 
     model = build_model(model_name, plm, tokenizer, model_config).to(device)
     model.load_state_dict(torch.load(infer_config['ckpt'], map_location=device), strict=False)
@@ -95,7 +99,7 @@ def main(cfg: DictConfig):
     # do eval on test set
     eval_result = eval_model_loss(model, valid_loader, device)
     metric_res['perplexity'] = float(eval_result['ppl'])
-    metric = MyMetric()
+    metric = MyMetric(**infer_config['metric_config'])
 
     for batch, posts, references in tqdm(infer_loader, desc='inferring'):
         batch = data_2_device(batch, device)

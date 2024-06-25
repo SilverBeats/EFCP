@@ -7,7 +7,7 @@ comae_dir: data/CoMAE
 pec_script: script/pec.py
 output_dir: output
 nli_path: pretrained_models/nli
-gpt2_path: pretrained_models/distilgpt2
+pretrained_model_path: ./pretrained_models/distilgpt2
 comet_path: pretrained_models/comet-bart
 num_generate: 5
 decode_method: beam

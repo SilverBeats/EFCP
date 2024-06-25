@@ -9,7 +9,7 @@ defaults:
 
 train:
   corpus_dir: output
-  gpt2_path: ./pretrained_models/distilgpt2
+  pretrained_model_path: ./pretrained_models/distilgpt2
   ablation_mode:   # pwp/per/cs/pred_loss/ef/null
 
   experiment: *model_name
@@ -21,12 +21,12 @@ train:
   eval_interval: 1300
   train_batch_size: 32
   eval_batch_size: 48
-  lr: 1e-4
+  lr: 1e-5
   max_grad_norm: 1.0
   warm_up: 1300
   device: cuda
   skip_param_save:
-    - plm.lm.weight
+    - plm.lm_head.weight
   loss_label: loss
   train_log_items:
     - loss
